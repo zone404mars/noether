@@ -55,4 +55,25 @@ pcl::PolygonMesh extractSubMeshFromInlierVertices(const pcl::PolygonMesh& input_
   return output_mesh;
 }
 
+pcl::PolygonMesh extractSubMeshFromFaces(const pcl::PolygonMesh& input_mesh, const std::vector<int>& face_indices)
+{
+  // Keep the requested faces against the full vertex cloud
+  pcl::PolygonMesh intermediate_mesh;
+  intermediate_mesh.cloud = input_mesh.cloud;
+  intermediate_mesh.polygons.reserve(face_indices.size());
+  for (int face_index : face_indices)
+    intermediate_mesh.polygons.push_back(input_mesh.polygons[static_cast<std::size_t>(face_index)]);
+
+  // Remove the now-unused vertices and compact/remap the cloud
+  pcl::surface::SimplificationRemoveUnusedVertices simplifier;
+  pcl::PolygonMesh output_mesh;
+  simplifier.simplify(intermediate_mesh, output_mesh);
+
+  // Copy the header data
+  output_mesh.header = input_mesh.header;
+  output_mesh.cloud.header = input_mesh.cloud.header;
+
+  return output_mesh;
+}
+
 }  // namespace noether

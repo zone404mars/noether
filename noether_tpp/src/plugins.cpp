@@ -4,6 +4,7 @@
 // Mesh modifiers
 #include <noether_tpp/mesh_modifiers/clean_data_modifier.h>
 #include <noether_tpp/mesh_modifiers/compound_modifier.h>
+#include <noether_tpp/mesh_modifiers/curvature_threshold_modifier.h>
 #include <noether_tpp/mesh_modifiers/euclidean_clustering_modifier.h>
 #include <noether_tpp/mesh_modifiers/face_subdivision_modifier.h>
 #include <noether_tpp/mesh_modifiers/fill_holes_modifier.h>
@@ -54,6 +55,7 @@ namespace noether
 {
 // Mesh Modifiers
 EXPORT_SIMPLE_MESH_MODIFIER_PLUGIN(CleanData, CleanData)
+EXPORT_SIMPLE_MESH_MODIFIER_PLUGIN(CurvatureThresholdMeshModifier, CurvatureThreshold)
 EXPORT_SIMPLE_MESH_MODIFIER_PLUGIN(EuclideanClusteringMeshModifier, EuclideanClustering)
 EXPORT_SIMPLE_MESH_MODIFIER_PLUGIN(FaceMidpointSubdivisionMeshModifier, FaceMidpointSubdivision);
 EXPORT_SIMPLE_MESH_MODIFIER_PLUGIN(FaceSubdivisionByAreaMeshModifier, FaceSubdivisionByArea);

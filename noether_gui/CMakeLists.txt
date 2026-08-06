@@ -72,6 +72,7 @@ add_library(
   src/widgets/tool_path_modifiers/offset_modifier_widget.cpp
   src/widgets/tool_path_modifiers/uniform_spacing_modifier_widget.cpp
   # Mesh Modifiers
+  src/widgets/mesh_modifiers/curvature_threshold_modifier_widget.cpp
   src/widgets/mesh_modifiers/euclidean_clustering_modifier_widget.cpp
   src/widgets/mesh_modifiers/face_subdivision_modifier_widget.cpp
   src/widgets/mesh_modifiers/fill_holes_modifier_widget.cpp

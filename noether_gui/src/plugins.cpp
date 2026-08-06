@@ -35,6 +35,7 @@
 #include <noether_gui/widgets/tool_path_modifiers/uniform_spacing_modifier_widget.h>
 #include <noether_gui/widgets/tool_path_modifiers/spline_extrapolation_modifier_widget.h>
 // Mesh Modifiers
+#include <noether_gui/widgets/mesh_modifiers/curvature_threshold_modifier_widget.h>
 #include <noether_gui/widgets/mesh_modifiers/euclidean_clustering_modifier_widget.h>
 #include <noether_gui/widgets/mesh_modifiers/face_subdivision_modifier_widget.h>
 #include <noether_gui/widgets/mesh_modifiers/fill_holes_modifier_widget.h>
@@ -50,6 +51,7 @@
 namespace noether
 {
 // Mesh Modifiers
+EXPORT_SIMPLE_MESH_MODIFIER_WIDGET_PLUGIN(CurvatureThresholdMeshModifierWidget, CurvatureThreshold)
 EXPORT_SIMPLE_MESH_MODIFIER_WIDGET_PLUGIN(EuclideanClusteringMeshModifierWidget, EuclideanClustering)
 EXPORT_SIMPLE_MESH_MODIFIER_WIDGET_PLUGIN(FaceMidpointSubdivisionMeshModifierWidget, FaceMidpointSubdivision);
 EXPORT_SIMPLE_MESH_MODIFIER_WIDGET_PLUGIN(FaceSubdivisionByAreaMeshModifierWidget, FaceSubdivisionByArea);

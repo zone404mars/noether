@@ -3,9 +3,14 @@
 #include <noether_tpp/core/types.h>
 #include <QMainWindow>
 #include <vtkSmartPointer.h>
+#include <pcl/PolygonMesh.h>
+#include <array>
+#include <vector>
 
 class QVTKOpenGLNativeWidget;
 class QDir;
+class QDoubleSpinBox;
+class QCheckBox;
 class vtkActor;
 class vtkPolyDataMapper;
 class vtkProp;
@@ -15,6 +20,8 @@ class vtkAxesActor;
 class vtkTubeFilter;
 class vtkPropAssembly;
 class vtkPolyData;
+class vtkCellPicker;
+class vtkUnsignedCharArray;
 
 namespace Ui
 {
@@ -54,7 +61,15 @@ public:
   void configure(const QString& file);
 
   /**
+   * @brief Clears all interactively selected regions
+   */
+  void clearSelection();
+
+  /**
    * @brief Invokes the planning of a tool path based on the current mesh file and tool path planner configuration
+   * @details A tool path is planned for each region the user has selected in the viewer (see
+   * ::onCellClicked). Each selected region is extracted as a submesh and run through the pipeline's
+   * mesh modifier, planner, and tool path modifier.
    */
   void plan();
 
@@ -86,9 +101,32 @@ public:
 
 protected:
   void onLoadMesh(const bool /*checked*/);
+  void onClearSelection(const bool /*checked*/);
   void onSaveModifiedMeshes(const bool /*checked*/);
   void onSaveToolPaths(const bool /*checked*/);
   void render();
+
+  /** @brief Builds the VTK poly data, face adjacency, per-cell color array, and resets the selection */
+  void buildSelectionData();
+  /** @brief Handles a viewer click on the mesh: grows/toggles the region containing the clicked face */
+  void onCellClicked(int cell_id);
+  /**
+   * @brief Grows a continuous, roughly-flat region of faces starting from a seed face
+   * @details Flood-fills across edge-adjacent faces while the angle between a face and its neighbor
+   * stays within the flatness-angle threshold, so growth follows a gently curving surface and stops
+   * at sharper edges.
+   */
+  std::vector<int> growRegion(int seed_face) const;
+  /** @brief Refreshes the per-cell colors from the current selection (white = unselected) */
+  void updateSelectionColors();
+  /**
+   * @brief Returns, per face, whether it survives erosion by the tool radius
+   * @details A face is kept only if it belongs to a selected region and its geodesic distance to
+   * that region's boundary is at least the tool radius. This removes the frange of width = tool
+   * radius around each region (where a disc tool would overhang onto neighbors), so a strip
+   * narrower than the tool diameter is eroded away entirely.
+   */
+  std::vector<char> erodeSelection() const;
 
   std::string mesh_file_;
 
@@ -112,6 +150,34 @@ protected:
   vtkSmartPointer<vtkTubeFilter> tube_filter_;
 
   std::vector<ToolPaths> tool_paths_;
+
+  // Interactive region selection
+  /** @brief The full input mesh currently loaded (selection canvas) */
+  pcl::PolygonMesh mesh_;
+  /** @brief VTK representation of mesh_ used for display and cell picking (cell i == polygon i) */
+  vtkSmartPointer<vtkPolyData> selection_poly_;
+  /** @brief Per-cell RGB colors of selection_poly_ (white = unselected, colored = selected) */
+  vtkSmartPointer<vtkUnsignedCharArray> cell_colors_;
+  /** @brief Picker mapping a viewer click to a mesh face (cell) */
+  vtkSmartPointer<vtkCellPicker> cell_picker_;
+  /** @brief For each face, indices of its edge-adjacent faces */
+  std::vector<std::vector<int>> face_adjacency_;
+  /** @brief Unit normal of each face (parallel to mesh_.polygons) */
+  std::vector<std::array<double, 3>> face_normals_;
+  /** @brief Centroid of each face (parallel to mesh_.polygons), for geodesic distance in erosion */
+  std::vector<std::array<double, 3>> face_centroids_;
+  /** @brief For each face, the id of the selected region it belongs to, or -1 if unselected */
+  std::vector<int> face_region_;
+  /** @brief Monotonically increasing id assigned to each newly selected region (for coloring) */
+  int next_region_id_ = 0;
+  /** @brief Spin box controlling the flatness (max angle between adjacent faces, in degrees) */
+  QDoubleSpinBox* flatness_angle_spin_box_ = nullptr;
+  /** @brief Spin box controlling the tool radius (mm) used to erode the selected regions */
+  QDoubleSpinBox* tool_radius_spin_box_ = nullptr;
+  /** @brief Check box enabling/disabling the tool-radius erosion */
+  QCheckBox* tool_radius_enabled_check_box_ = nullptr;
+  /** @brief The submeshes planned in the last plan() call (one per selected region), for display/save */
+  std::vector<pcl::PolygonMesh> fragments_;
 };
 
 }  // namespace noether

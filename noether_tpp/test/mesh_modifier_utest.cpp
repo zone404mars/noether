@@ -12,6 +12,9 @@
  */
 static const std::string mesh_modifiers_data_retaining = R"(
 - name: CleanData
+- name: CurvatureThreshold
+  max_abs_curvature: 1000.0
+  curvature_type: max_principal
 - &clustering
   name: EuclideanClustering
   tolerance: 1.0

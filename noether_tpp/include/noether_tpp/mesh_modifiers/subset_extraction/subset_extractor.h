@@ -54,4 +54,14 @@ struct SubMeshExtractor
 pcl::PolygonMesh extractSubMeshFromInlierVertices(const pcl::PolygonMesh& input_mesh,
                                                   const std::vector<int>& inlier_vertex_indices);
 
+/**
+ * @brief Extracts the sub-mesh composed of the given faces (polygons)
+ * @details Unlike ::extractSubMeshFromInlierVertices (which selects by vertex), this selects by
+ * face index, so the result contains exactly the requested faces with their vertices compacted and
+ * remapped. All vertex data fields of the parent cloud are preserved.
+ * @param input_mesh The parent mesh
+ * @param face_indices Indices into @p input_mesh.polygons of the faces to keep
+ */
+pcl::PolygonMesh extractSubMeshFromFaces(const pcl::PolygonMesh& input_mesh, const std::vector<int>& face_indices);
+
 }  // namespace noether
