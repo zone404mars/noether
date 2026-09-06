@@ -41,7 +41,12 @@
 #include <vtkTextProperty.h>
 #include <vtkActor.h>
 #include <vtkPropCollection.h>
+#include <vtkActor2D.h>
+#include <vtkCamera.h>
 #include <vtkCellPicker.h>
+#include <vtkCoordinate.h>
+#include <vtkPoints.h>
+#include <vtkPolyDataMapper2D.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkObjectFactory.h>
 #include <vtkPolyData.h>
@@ -55,6 +60,7 @@
 #include <noether_tpp/mesh_modifiers/subset_extraction/subset_extractor.h>
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QToolBar>
@@ -63,6 +69,7 @@
 #include <pcl/point_types.h>
 #include <pcl/conversions.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -73,26 +80,110 @@
 
 namespace
 {
+/** @brief Screen spacing between two brush samples when filling a drag segment, in pixels */
+constexpr double kBrushSampleSpacingPx = 4.0;
+/** @brief Ceiling on the samples one move event may paint, so a fast flick cannot stall the view */
+constexpr int kMaxBrushSamplesPerMove = 24;
+/** @brief Brush diameter used when the toolbar spin box does not exist yet, in millimetres */
+constexpr double kDefaultBrushDiameterMm = 30.0;
+/** @brief Minimum screen spacing between two recorded lasso points, in pixels */
+constexpr double kLassoMinPointSpacingPx = 3.0;
+
+/** @brief Axis-aligned bounds of a 2D outline, as (lower, upper) */
+std::pair<Eigen::Vector2d, Eigen::Vector2d> outlineBounds(const std::vector<Eigen::Vector2d>& outline)
+{
+  Eigen::Vector2d lower = outline.front();
+  Eigen::Vector2d upper = outline.front();
+  for (const Eigen::Vector2d& point : outline)
+  {
+    lower = lower.cwiseMin(point);
+    upper = upper.cwiseMax(point);
+  }
+  return { lower, upper };
+}
+
 /**
- * @brief Trackball camera interactor style that also reports a plain left-click (press + release
- * without dragging) so the click can be used to pick a mesh region. Dragging still rotates the
- * camera as usual.
+ * @brief Whether a face turns toward the eye.
+ * @details The direction from the eye to the face is constant only under a parallel projection; a
+ * perspective camera needs it recomputed per face. A degenerate face carries a zero normal, whose
+ * null dot product drops it here as well.
  */
-class RegionPickInteractorStyle : public vtkInteractorStyleTrackballCamera
+bool facesTheCamera(const Eigen::Vector3d& normal,
+                    const Eigen::Vector3d& centroid,
+                    const Eigen::Vector3d& eye,
+                    const Eigen::Vector3d& projection_direction,
+                    const bool parallel)
+{
+  const Eigen::Vector3d toward = parallel ? projection_direction : (centroid - eye);
+  return normal.dot(toward) < 0.0;
+}
+
+/** @brief Lowest region id among a set of faces, or -1 when none of them is selected */
+int lowestRegion(const std::vector<int>& face_region, const std::vector<int>& faces)
+{
+  int lowest = -1;
+  for (const int face : faces)
+  {
+    const int region = face_region[static_cast<std::size_t>(face)];
+    if (region >= 0 && (lowest < 0 || region < lowest))
+    {
+      lowest = region;
+    }
+  }
+  return lowest;
+}
+
+/**
+ * @brief Interactor style that shares the left mouse button between the camera and the selection
+ * tools.
+ * @details With no drag tool active the behavior is that of the trackball camera, plus reporting of
+ * clicks that did not drag (@ref on_click) so a click can pick a region. With a drag tool active
+ * (brush, lasso) the left button feeds @ref on_drag_start / @ref on_drag_move / @ref on_drag_end
+ * instead of orbiting, unless Alt is held: the orbit then stays reachable without leaving the tool.
+ * Holding Shift marks the drag as an erase, which is reported back to the tool.
+ *
+ * The modifier keys are read once, when the button goes down. Releasing Shift halfway through a
+ * stroke does not turn its remainder into a selection, which is how paint tools behave elsewhere
+ * and what keeps a stroke from ending up half painted and half erased.
+ */
+class SelectionInteractorStyle : public vtkInteractorStyleTrackballCamera
 {
 public:
-  static RegionPickInteractorStyle* New();
-  vtkTypeMacro(RegionPickInteractorStyle, vtkInteractorStyleTrackballCamera);
+  static SelectionInteractorStyle* New();
+  vtkTypeMacro(SelectionInteractorStyle, vtkInteractorStyleTrackballCamera);
 
+  /** @brief Returns true when the active tool consumes left-button drags */
+  std::function<bool()> drag_selects;
   /** @brief Called with the display (x, y) of a click that did not drag */
   std::function<void(int, int)> on_click;
+  /** @brief Start of a drag consumed by the tool; `erase` reports whether Shift was held */
+  std::function<void(int x, int y, bool erase)> on_drag_start;
+  /** @brief Continuation of a consumed drag */
+  std::function<void(int x, int y, bool erase)> on_drag_move;
+  /** @brief End of a consumed drag */
+  std::function<void(bool erase)> on_drag_end;
 
   void OnLeftButtonDown() override
   {
-    const int* pos = this->GetInteractor()->GetEventPosition();
+    vtkRenderWindowInteractor* interactor = this->GetInteractor();
+    const int* pos = interactor->GetEventPosition();
     down_x_ = pos[0];
     down_y_ = pos[1];
     dragged_ = false;
+    erasing_ = interactor->GetShiftKey() != 0;
+
+    // Alt reserves the orbit for the camera even while a drag tool is active.
+    painting_ = drag_selects && drag_selects() && interactor->GetAltKey() == 0;
+    if (painting_)
+    {
+      // Return before the base class so the camera never enters its rotate state.
+      if (on_drag_start)
+      {
+        on_drag_start(pos[0], pos[1], erasing_);
+      }
+      return;
+    }
+
     vtkInteractorStyleTrackballCamera::OnLeftButtonDown();
   }
 
@@ -100,27 +191,57 @@ public:
   {
     const int* pos = this->GetInteractor()->GetEventPosition();
     if (std::abs(pos[0] - down_x_) > kDragThreshold || std::abs(pos[1] - down_y_) > kDragThreshold)
+    {
       dragged_ = true;
+    }
+
+    if (painting_)
+    {
+      if (on_drag_move)
+      {
+        on_drag_move(pos[0], pos[1], erasing_);
+      }
+      return;
+    }
+
     vtkInteractorStyleTrackballCamera::OnMouseMove();
   }
 
   void OnLeftButtonUp() override
   {
+    if (painting_)
+    {
+      painting_ = false;
+      if (on_drag_end)
+      {
+        on_drag_end(erasing_);
+      }
+      return;
+    }
+
     if (!dragged_ && on_click)
     {
       const int* pos = this->GetInteractor()->GetEventPosition();
       on_click(pos[0], pos[1]);
     }
+
     vtkInteractorStyleTrackballCamera::OnLeftButtonUp();
   }
 
 private:
-  static constexpr int kDragThreshold = 3;  // pixels of motion above which a press counts as a drag
+  /** @brief Pixels of motion above which a press counts as a drag rather than a click */
+  static constexpr int kDragThreshold = 3;
+  /** @brief Display coordinates of the last left-button press */
   int down_x_ = 0;
   int down_y_ = 0;
+  /** @brief Whether the current press has moved far enough to count as a drag */
   bool dragged_ = false;
+  /** @brief Whether the current press is being consumed by a selection tool */
+  bool painting_ = false;
+  /** @brief Whether Shift was held when the current press started (erase instead of select) */
+  bool erasing_ = false;
 };
-vtkStandardNewMacro(RegionPickInteractorStyle);
+vtkStandardNewMacro(SelectionInteractorStyle);
 
 }  // namespace
 
@@ -200,22 +321,54 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   vtkRenderWindow* window = render_widget_->renderWindow();
   window->AddRenderer(renderer_);
 
-  // Interactor style that rotates the camera on drag but reports plain clicks for region picking
+  // Interactor style shared between the camera and the selection tools: a plain click picks a
+  // region, a drag paints or lassos when one of those tools is active.
   cell_picker_ = vtkSmartPointer<vtkCellPicker>::New();
   cell_picker_->SetTolerance(0.0005);
-  auto interactor_style = vtkSmartPointer<RegionPickInteractorStyle>::New();
+  auto interactor_style = vtkSmartPointer<SelectionInteractorStyle>::New();
   interactor_style->on_click = [this](int x, int y) {
-    cell_picker_->Pick(x, y, 0, renderer_);
-    // Only react to clicks that landed on the selection mesh (not on tool paths, axes, etc.)
-    if (cell_picker_->GetActor() == mesh_actor_.Get())
+    const int face = pickFace(x, y);
+    if (face >= 0)
     {
-      const vtkIdType cell_id = cell_picker_->GetCellId();
-      if (cell_id >= 0)
-        onCellClicked(static_cast<int>(cell_id));
+      onCellClicked(face);
     }
   };
+  interactor_style->drag_selects = [this]() { return tool_ != SelectionTool::Region; };
+  interactor_style->on_drag_start = [this](int x, int y, bool erase) { onDragStart(x, y, erase); };
+  interactor_style->on_drag_move = [this](int x, int y, bool erase) { onDragMove(x, y, erase); };
+  interactor_style->on_drag_end = [this](bool erase) { onDragEnd(erase); };
   render_widget_->interactor()->SetInteractorStyle(interactor_style);
   render_widget_->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+
+  // Outline overlay for the lasso. Its points live in display coordinates, so the transform
+  // coordinate is set explicitly rather than relying on the mapper's default interpretation.
+  lasso_poly_ = vtkSmartPointer<vtkPolyData>::New();
+  lasso_mapper_ = vtkSmartPointer<vtkPolyDataMapper2D>::New();
+  lasso_mapper_->SetInputData(lasso_poly_);
+  {
+    auto display_coordinate = vtkSmartPointer<vtkCoordinate>::New();
+    display_coordinate->SetCoordinateSystemToDisplay();
+    lasso_mapper_->SetTransformCoordinate(display_coordinate);
+  }
+  lasso_actor_ = vtkSmartPointer<vtkActor2D>::New();
+  lasso_actor_->SetMapper(lasso_mapper_);
+  lasso_actor_->GetProperty()->SetColor(1.0, 1.0, 0.0);
+  lasso_actor_->GetProperty()->SetLineWidth(2.0);
+  lasso_actor_->SetVisibility(false);
+  renderer_->AddActor2D(lasso_actor_);
+
+  // Selection tool selector. The three tools fill the same face_region_ table, so switching is free
+  // and leaves what is already selected untouched.
+  tool_combo_box_ = new QComboBox(this);
+  tool_combo_box_->addItem("Region (click)", static_cast<int>(SelectionTool::Region));
+  tool_combo_box_->addItem("Brush (drag)", static_cast<int>(SelectionTool::Brush));
+  tool_combo_box_->addItem("Lasso (drag)", static_cast<int>(SelectionTool::Lasso));
+  tool_combo_box_->setToolTip(
+      "Selection tool. Shift while dragging erases instead of selecting; Alt while dragging orbits "
+      "the camera without leaving the tool.");
+  ui_->toolBar->addSeparator();
+  ui_->toolBar->addWidget(new QLabel("Tool:", this));
+  ui_->toolBar->addWidget(tool_combo_box_);
 
   // Toolbar control for how "flat" a region must stay while growing (max face-to-face angle)
   flatness_angle_spin_box_ = new QDoubleSpinBox(this);
@@ -226,9 +379,34 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   flatness_angle_spin_box_->setToolTip(
       "Region flatness: maximum angle between adjacent faces for a click-selected region to keep "
       "growing. Region growth stops at edges sharper than this.");
-  ui_->toolBar->addSeparator();
   ui_->toolBar->addWidget(new QLabel("Region flatness:", this));
   ui_->toolBar->addWidget(flatness_angle_spin_box_);
+
+  // Brush diameter, measured along the surface rather than on screen: zooming does not change what
+  // a stroke covers, and the value can be set to the actual disc diameter to preview its footprint.
+  brush_diameter_spin_box_ = new QDoubleSpinBox(this);
+  brush_diameter_spin_box_->setRange(0.1, 10000.0);
+  brush_diameter_spin_box_->setDecimals(1);
+  brush_diameter_spin_box_->setSingleStep(5.0);
+  brush_diameter_spin_box_->setValue(kDefaultBrushDiameterMm);
+  brush_diameter_spin_box_->setSuffix(" mm");
+  brush_diameter_spin_box_->setToolTip(
+      "Brush diameter, measured on the surface. Set it to the disc diameter to see what one pass of "
+      "the tool covers.");
+  ui_->toolBar->addWidget(new QLabel("Brush diameter:", this));
+  ui_->toolBar->addWidget(brush_diameter_spin_box_);
+
+  // Connected after the items were added: addItem() emits currentIndexChanged while inserting the
+  // first entry, and the handler reads controls that do not exist yet at that point.
+  connect(tool_combo_box_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+    tool_ = static_cast<SelectionTool>(tool_combo_box_->itemData(index).toInt());
+    // An outline left over from an interrupted drag must not survive a tool change.
+    lasso_points_.clear();
+    updateLassoOverlay();
+    updateToolControls();
+    render();
+  });
+  updateToolControls();
 
   // Toolbar control for the tool radius (mm) used to erode the selected regions. A selected strip
   // narrower than the tool diameter is eroded away (the disc would overhang onto its neighbors).
@@ -407,63 +585,12 @@ void TPPWidget::buildSelectionData()
   cell_colors_->SetNumberOfTuples(static_cast<vtkIdType>(num_faces));
   selection_poly_->GetCellData()->SetScalars(cell_colors_);
 
-  // Vertex coordinates for face-normal computation
-  pcl::PointCloud<pcl::PointXYZ> vertices;
-  pcl::fromPCLPointCloud2(mesh_.cloud, vertices);
-
-  // Face normals (unit) and centroids
-  face_normals_.assign(num_faces, { 0.0, 0.0, 0.0 });
-  face_centroids_.assign(num_faces, { 0.0, 0.0, 0.0 });
-  for (std::size_t f = 0; f < num_faces; ++f)
-  {
-    const auto& v = mesh_.polygons[f].vertices;
-    if (v.size() < 3)
-      continue;
-    const pcl::PointXYZ& a = vertices[v[0]];
-    const pcl::PointXYZ& b = vertices[v[1]];
-    const pcl::PointXYZ& c = vertices[v[2]];
-    const double e1[3] = { b.x - a.x, b.y - a.y, b.z - a.z };
-    const double e2[3] = { c.x - a.x, c.y - a.y, c.z - a.z };
-    double n[3] = { e1[1] * e2[2] - e1[2] * e2[1],
-                    e1[2] * e2[0] - e1[0] * e2[2],
-                    e1[0] * e2[1] - e1[1] * e2[0] };
-    const double len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-    if (len > 1e-12)
-    {
-      n[0] /= len;
-      n[1] /= len;
-      n[2] /= len;
-    }
-    face_normals_[f] = { n[0], n[1], n[2] };
-    face_centroids_[f] = { (a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0, (a.z + b.z + c.z) / 3.0 };
-  }
-
-  // Face adjacency: faces that share an edge (an unordered vertex pair)
-  face_adjacency_.assign(num_faces, {});
-  std::map<std::pair<int, int>, std::vector<int>> edge_to_faces;
-  for (std::size_t f = 0; f < num_faces; ++f)
-  {
-    const auto& v = mesh_.polygons[f].vertices;
-    const std::size_t n = v.size();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-      int a = static_cast<int>(v[i]);
-      int b = static_cast<int>(v[(i + 1) % n]);
-      if (a > b)
-        std::swap(a, b);
-      edge_to_faces[{ a, b }].push_back(static_cast<int>(f));
-    }
-  }
-  for (const auto& entry : edge_to_faces)
-  {
-    const std::vector<int>& faces = entry.second;
-    for (std::size_t i = 0; i < faces.size(); ++i)
-      for (std::size_t j = i + 1; j < faces.size(); ++j)
-      {
-        face_adjacency_[faces[i]].push_back(faces[j]);
-        face_adjacency_[faces[j]].push_back(faces[i]);
-      }
-  }
+  // Face graph and per-face geometry, computed by noether_tpp so they can be unit tested without
+  // a window. Every selection tool works on these two tables and nothing else.
+  face_adjacency_ = buildFaceAdjacency(mesh_);
+  const FaceGeometry geometry = computeFaceGeometry(mesh_);
+  face_normals_ = geometry.normals;
+  face_centroids_ = geometry.centroids;
 
   // Reset the selection
   face_region_.assign(num_faces, -1);
@@ -498,14 +625,14 @@ std::vector<int> TPPWidget::growRegion(int seed_face) const
     to_visit.pop();
     region.push_back(f);
 
-    const std::array<double, 3>& nf = face_normals_[static_cast<std::size_t>(f)];
+    const Eigen::Vector3d& nf = face_normals_[static_cast<std::size_t>(f)];
     for (int neighbor : face_adjacency_[static_cast<std::size_t>(f)])
     {
       if (visited[static_cast<std::size_t>(neighbor)])
         continue;
 
-      const std::array<double, 3>& nn = face_normals_[static_cast<std::size_t>(neighbor)];
-      const double dot = nf[0] * nn[0] + nf[1] * nn[1] + nf[2] * nn[2];
+      const Eigen::Vector3d& nn = face_normals_[static_cast<std::size_t>(neighbor)];
+      const double dot = nf.dot(nn);
       if (dot >= min_dot)
       {
         visited[static_cast<std::size_t>(neighbor)] = 1;
@@ -549,15 +676,15 @@ std::vector<char> TPPWidget::erodeSelection() const
     // above the region surface (a relief sticking up, which the disc would hit). Neighbors that
     // step down (side walls, recesses) do not obstruct a disc resting on top, and free/open edges
     // have no neighbor at all -- neither is an erosion source.
-    const std::array<double, 3>& cf = face_centroids_[f];
-    const std::array<double, 3>& nf = face_normals_[f];
+    const Eigen::Vector3d& cf = face_centroids_[f];
+    const Eigen::Vector3d& nf = face_normals_[f];
     bool obstacle_boundary = false;
     for (int nb : face_adjacency_[f])
     {
       if (face_region_[static_cast<std::size_t>(nb)] == r)
         continue;  // same region: not a boundary
-      const std::array<double, 3>& cg = face_centroids_[static_cast<std::size_t>(nb)];
-      const double rise = (cg[0] - cf[0]) * nf[0] + (cg[1] - cf[1]) * nf[1] + (cg[2] - cf[2]) * nf[2];
+      const Eigen::Vector3d& cg = face_centroids_[static_cast<std::size_t>(nb)];
+      const double rise = (cg - cf).dot(nf);
       if (rise > 1e-6)  // neighbor is above the surface -> a rising relief -> obstacle
       {
         obstacle_boundary = true;
@@ -579,16 +706,13 @@ std::vector<char> TPPWidget::erodeSelection() const
     if (top.first > dist[static_cast<std::size_t>(u)])
       continue;
     const int r = face_region_[static_cast<std::size_t>(u)];
-    const std::array<double, 3>& cu = face_centroids_[static_cast<std::size_t>(u)];
+    const Eigen::Vector3d& cu = face_centroids_[static_cast<std::size_t>(u)];
     for (int v : face_adjacency_[static_cast<std::size_t>(u)])
     {
       if (face_region_[static_cast<std::size_t>(v)] != r)
         continue;  // stay within the region
-      const std::array<double, 3>& cv = face_centroids_[static_cast<std::size_t>(v)];
-      const double dx = cu[0] - cv[0];
-      const double dy = cu[1] - cv[1];
-      const double dz = cu[2] - cv[2];
-      const double nd = dist[static_cast<std::size_t>(u)] + std::sqrt(dx * dx + dy * dy + dz * dz);
+      const Eigen::Vector3d& cv = face_centroids_[static_cast<std::size_t>(v)];
+      const double nd = dist[static_cast<std::size_t>(u)] + (cu - cv).norm();
       if (nd < dist[static_cast<std::size_t>(v)])
       {
         dist[static_cast<std::size_t>(v)] = nd;
@@ -671,8 +795,259 @@ void TPPWidget::onCellClicked(int cell_id)
   render();
 }
 
+int TPPWidget::pickFace(const int x, const int y) const
+{
+  cell_picker_->Pick(x, y, 0, renderer_);
+
+  // Only a hit on the selection mesh counts. The tool paths, the axes and the fragment actors share
+  // the scene, and a ray landing on any of them would otherwise be reported as a face.
+  if (cell_picker_->GetActor() != mesh_actor_.Get())
+  {
+    return -1;
+  }
+
+  const vtkIdType cell_id = cell_picker_->GetCellId();
+  if (cell_id < 0 || static_cast<std::size_t>(cell_id) >= face_region_.size())
+  {
+    return -1;
+  }
+  return static_cast<int>(cell_id);
+}
+
+void TPPWidget::paintBrushDab(const int x, const int y, const bool erase)
+{
+  const int seed = pickFace(x, y);
+  if (seed < 0)
+  {
+    return;  // the cursor is off the mesh: a dab in the air paints nothing
+  }
+
+  // The spin box carries a diameter in millimetres, the mesh is in metres.
+  const double diameter_mm =
+      (brush_diameter_spin_box_ != nullptr) ? brush_diameter_spin_box_->value() : kDefaultBrushDiameterMm;
+  const std::vector<int> dab = facesWithinGeodesicRadius(face_adjacency_, face_centroids_, seed, diameter_mm / 2000.0);
+
+  if (erase)
+  {
+    clearFacesFromRegions(face_region_, dab);
+    return;
+  }
+
+  if (stroke_region_ < 0)
+  {
+    // A stroke starting on an existing surface extends it; one starting on bare metal opens a new
+    // surface. Without this, releasing and painting the same panel again would yield two regions,
+    // therefore two tool paths, each paying its own approach and departure.
+    const int existing = face_region_[static_cast<std::size_t>(seed)];
+    stroke_region_ = (existing >= 0) ? existing : next_region_id_++;
+  }
+  assignFacesToRegion(face_region_, dab, stroke_region_);
+}
+
+void TPPWidget::paintBrushAlongSegment(const int x, const int y, const bool erase)
+{
+  const Eigen::Vector2d target(x, y);
+  const Eigen::Vector2d start = drag_position_;
+  drag_position_ = target;
+
+  // A move event can jump tens of pixels. Painting a single dab per event would leave a dotted
+  // trail, so the segment is sampled; the ceiling keeps a fast flick from casting hundreds of rays.
+  const double span = (target - start).norm();
+  const int samples = std::min(kMaxBrushSamplesPerMove, 1 + static_cast<int>(span / kBrushSampleSpacingPx));
+
+  for (int i = 1; i <= samples; ++i)
+  {
+    const Eigen::Vector2d sample = start + (target - start) * (static_cast<double>(i) / samples);
+    paintBrushDab(static_cast<int>(std::lround(sample.x())), static_cast<int>(std::lround(sample.y())), erase);
+  }
+}
+
+std::vector<int> TPPWidget::facesInsideLasso() const
+{
+  std::vector<int> enclosed;
+  vtkCamera* camera = renderer_->GetActiveCamera();
+  if (lasso_points_.size() < 3 || face_centroids_.empty() || camera == nullptr)
+  {
+    return enclosed;
+  }
+
+  const bool parallel = camera->GetParallelProjection() != 0;
+  const Eigen::Vector3d eye(camera->GetPosition());
+  const Eigen::Vector3d projection_direction(camera->GetDirectionOfProjection());
+
+  // Rejecting a face on four comparisons against the outline's bounding box is far cheaper than
+  // running the crossing count against an outline that may hold hundreds of points.
+  const std::pair<Eigen::Vector2d, Eigen::Vector2d> bounds = outlineBounds(lasso_points_);
+
+  for (std::size_t f = 0; f < face_centroids_.size(); ++f)
+  {
+    const Eigen::Vector3d& centroid = face_centroids_[f];
+    if (!facesTheCamera(face_normals_[f], centroid, eye, projection_direction, parallel))
+    {
+      continue;
+    }
+
+    // VTK reports display coordinates from the bottom-left corner, which is also the origin of the
+    // interactor event positions the outline was built from: the two are directly comparable.
+    renderer_->SetWorldPoint(centroid.x(), centroid.y(), centroid.z(), 1.0);
+    renderer_->WorldToDisplay();
+    double display[3] = { 0.0, 0.0, 0.0 };
+    renderer_->GetDisplayPoint(display);
+    const Eigen::Vector2d screen(display[0], display[1]);
+
+    if ((screen.array() < bounds.first.array()).any() || (screen.array() > bounds.second.array()).any())
+    {
+      continue;
+    }
+    if (pointInPolygon(screen, lasso_points_))
+    {
+      enclosed.push_back(static_cast<int>(f));
+    }
+  }
+  return enclosed;
+}
+
+bool TPPWidget::extendLasso(const int x, const int y)
+{
+  const Eigen::Vector2d point(x, y);
+
+  // Recording every event would pile up thousands of nearly identical points, and the crossing
+  // count runs once per face against the whole outline.
+  if (!lasso_points_.empty() && (point - lasso_points_.back()).norm() < kLassoMinPointSpacingPx)
+  {
+    return false;
+  }
+  lasso_points_.push_back(point);
+  return true;
+}
+
+void TPPWidget::updateLassoOverlay()
+{
+  const vtkIdType count = static_cast<vtkIdType>(lasso_points_.size());
+  if (count < 2)
+  {
+    lasso_actor_->SetVisibility(false);
+    return;
+  }
+
+  auto points = vtkSmartPointer<vtkPoints>::New();
+  points->SetNumberOfPoints(count);
+  for (vtkIdType i = 0; i < count; ++i)
+  {
+    const Eigen::Vector2d& point = lasso_points_[static_cast<std::size_t>(i)];
+    points->SetPoint(i, point.x(), point.y(), 0.0);
+  }
+
+  // A closed polyline: the chord from the last point back to the first is drawn because the
+  // selection uses it too. Leaving it out would let the operator believe an open curve was traced,
+  // then wonder why the selection cut straight across.
+  auto lines = vtkSmartPointer<vtkCellArray>::New();
+  lines->InsertNextCell(count + 1);
+  for (vtkIdType i = 0; i < count; ++i)
+  {
+    lines->InsertCellPoint(i);
+  }
+  lines->InsertCellPoint(0);
+
+  lasso_poly_->SetPoints(points);
+  lasso_poly_->SetLines(lines);
+  lasso_poly_->Modified();
+  lasso_actor_->SetVisibility(true);
+}
+
+void TPPWidget::updateToolControls()
+{
+  // Greying out the readings that do not apply says which parameter governs the active tool.
+  flatness_angle_spin_box_->setEnabled(tool_ == SelectionTool::Region);
+  brush_diameter_spin_box_->setEnabled(tool_ == SelectionTool::Brush);
+}
+
+void TPPWidget::closeLasso(const bool erase)
+{
+  const std::vector<int> enclosed = facesInsideLasso();
+  lasso_points_.clear();
+  updateLassoOverlay();
+
+  if (!enclosed.empty())
+  {
+    if (erase)
+    {
+      clearFacesFromRegions(face_region_, enclosed);
+    }
+    else
+    {
+      // The lowest region the outline covers absorbs the others, so an outline drawn across two
+      // surfaces fuses them; one landing only on bare metal opens a new surface.
+      const int covered = lowestRegion(face_region_, enclosed);
+      assignFacesToRegion(face_region_, enclosed, (covered >= 0) ? covered : next_region_id_++);
+    }
+  }
+
+  updateSelectionColors();
+  render();
+}
+
+void TPPWidget::onDragStart(const int x, const int y, const bool erase)
+{
+  // Allocated lazily by the first dab that lands, so a stroke may begin off the mesh.
+  stroke_region_ = -1;
+  drag_position_ = Eigen::Vector2d(x, y);
+
+  switch (tool_)
+  {
+    case SelectionTool::Brush:
+      paintBrushDab(x, y, erase);
+      updateSelectionColors();
+      render();
+      break;
+    case SelectionTool::Lasso:
+      lasso_points_.clear();
+      lasso_points_.push_back(Eigen::Vector2d(x, y));
+      updateLassoOverlay();
+      break;
+    case SelectionTool::Region:
+      break;  // the click path handles it; Region never consumes a drag
+  }
+}
+
+void TPPWidget::onDragMove(const int x, const int y, const bool erase)
+{
+  switch (tool_)
+  {
+    case SelectionTool::Brush:
+      paintBrushAlongSegment(x, y, erase);
+      updateSelectionColors();
+      render();
+      break;
+    case SelectionTool::Lasso:
+      // Redraw only when the point survived decimation, not on every mouse event.
+      if (extendLasso(x, y))
+      {
+        updateLassoOverlay();
+        render();
+      }
+      break;
+    case SelectionTool::Region:
+      break;
+  }
+}
+
+void TPPWidget::onDragEnd(const bool erase)
+{
+  if (tool_ == SelectionTool::Lasso)
+  {
+    closeLasso(erase);
+  }
+  // The brush has already committed every dab, so it has nothing left to do here.
+  stroke_region_ = -1;
+}
+
 void TPPWidget::clearSelection()
 {
+  // An outline being traced is part of the selection gesture: clearing one clears the other.
+  lasso_points_.clear();
+  updateLassoOverlay();
+
   std::fill(face_region_.begin(), face_region_.end(), -1);
   next_region_id_ = 0;
   updateSelectionColors();

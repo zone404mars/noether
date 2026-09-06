@@ -1,14 +1,16 @@
 #pragma once
 
+#include <noether_tpp/core/face_selection.h>
 #include <noether_tpp/core/types.h>
+#include <Eigen/Core>
 #include <QMainWindow>
 #include <vtkSmartPointer.h>
 #include <pcl/PolygonMesh.h>
-#include <array>
 #include <vector>
 
 class QVTKOpenGLNativeWidget;
 class QDir;
+class QComboBox;
 class QDoubleSpinBox;
 class QCheckBox;
 class vtkActor;
@@ -20,7 +22,9 @@ class vtkAxesActor;
 class vtkTubeFilter;
 class vtkPropAssembly;
 class vtkPolyData;
+class vtkActor2D;
 class vtkCellPicker;
+class vtkPolyDataMapper2D;
 class vtkUnsignedCharArray;
 
 namespace Ui
@@ -38,6 +42,19 @@ enum class LineStyle
   INTRA_SEGMENT = 0, /*@brief between waypoints in a segment*/
   INTER_SEGMENT,     /*@brief between tool path segments*/
   INTER_PATH,        /*@brief between tool paths*/
+};
+
+/**
+ * @brief Selection tool the left mouse button drives in the 3D view.
+ */
+enum class SelectionTool
+{
+  /** @brief Click a face, grow a region across edges flatter than the flatness angle */
+  Region,
+  /** @brief Drag to paint the faces within the brush radius, measured along the surface */
+  Brush,
+  /** @brief Drag a freehand outline, select the camera-facing faces inside it */
+  Lasso
 };
 
 /**
@@ -128,6 +145,42 @@ protected:
    */
   std::vector<char> erodeSelection() const;
 
+  /** @brief Picks the mesh face under a display position; -1 when the ray misses the mesh */
+  int pickFace(int x, int y) const;
+  /**
+   * @brief Paints or erases one brush dab centred on a display position
+   * @details Commits into the selection without refreshing the view: the caller refreshes once per
+   * mouse event rather than once per dab.
+   */
+  void paintBrushDab(int x, int y, bool erase);
+  /**
+   * @brief Paints from the previous drag position to the given one
+   * @details A move event can jump tens of pixels, which would leave a dotted trail if each event
+   * painted a single dab.
+   */
+  void paintBrushAlongSegment(int x, int y, bool erase);
+
+  /** @brief Camera-facing faces whose centroid projects inside the current lasso outline */
+  std::vector<int> facesInsideLasso() const;
+  /**
+   * @brief Appends a point to the lasso outline if it is far enough from the previous one
+   * @return True when the point was kept, so the caller only redraws when the outline changed
+   */
+  bool extendLasso(int x, int y);
+  /** @brief Commits the lasso selection and clears the outline */
+  void closeLasso(bool erase);
+  /** @brief Rebuilds the 2D outline overlay from lasso_points_, hiding it when too short */
+  void updateLassoOverlay();
+  /** @brief Enables the reading that governs the active tool and greys out the others */
+  void updateToolControls();
+
+  /** @brief Start of a drag consumed by the active selection tool; `erase` reports the Shift key */
+  void onDragStart(int x, int y, bool erase);
+  /** @brief Continuation of a consumed drag */
+  void onDragMove(int x, int y, bool erase);
+  /** @brief End of a consumed drag */
+  void onDragEnd(bool erase);
+
   std::string mesh_file_;
 
   Ui::TPP* ui_;
@@ -161,17 +214,35 @@ protected:
   /** @brief Picker mapping a viewer click to a mesh face (cell) */
   vtkSmartPointer<vtkCellPicker> cell_picker_;
   /** @brief For each face, indices of its edge-adjacent faces */
-  std::vector<std::vector<int>> face_adjacency_;
+  FaceAdjacency face_adjacency_;
   /** @brief Unit normal of each face (parallel to mesh_.polygons) */
-  std::vector<std::array<double, 3>> face_normals_;
-  /** @brief Centroid of each face (parallel to mesh_.polygons), for geodesic distance in erosion */
-  std::vector<std::array<double, 3>> face_centroids_;
+  std::vector<Eigen::Vector3d> face_normals_;
+  /** @brief Centroid of each face (parallel to mesh_.polygons), for geodesic distances */
+  std::vector<Eigen::Vector3d> face_centroids_;
   /** @brief For each face, the id of the selected region it belongs to, or -1 if unselected */
   std::vector<int> face_region_;
   /** @brief Monotonically increasing id assigned to each newly selected region (for coloring) */
   int next_region_id_ = 0;
+
+  /** @brief Tool the left mouse button drives in the 3D view */
+  SelectionTool tool_ = SelectionTool::Region;
+  /** @brief Region the current stroke paints into; negative until the first dab lands on the mesh */
+  int stroke_region_ = -1;
+  /** @brief Display position of the last drag event, to paint the gap up to the next one */
+  Eigen::Vector2d drag_position_ = Eigen::Vector2d::Zero();
+  /** @brief Freehand lasso outline being drawn, in display coordinates */
+  std::vector<Eigen::Vector2d> lasso_points_;
+  /** @brief Closed polyline of the outline being traced, in display coordinates */
+  vtkSmartPointer<vtkPolyData> lasso_poly_;
+  vtkSmartPointer<vtkPolyDataMapper2D> lasso_mapper_;
+  vtkSmartPointer<vtkActor2D> lasso_actor_;
+
+  /** @brief Toolbar selector for the active selection tool */
+  QComboBox* tool_combo_box_ = nullptr;
   /** @brief Spin box controlling the flatness (max angle between adjacent faces, in degrees) */
   QDoubleSpinBox* flatness_angle_spin_box_ = nullptr;
+  /** @brief Spin box controlling the brush diameter (mm), measured along the surface */
+  QDoubleSpinBox* brush_diameter_spin_box_ = nullptr;
   /** @brief Spin box controlling the tool radius (mm) used to erode the selected regions */
   QDoubleSpinBox* tool_radius_spin_box_ = nullptr;
   /** @brief Check box enabling/disabling the tool-radius erosion */
