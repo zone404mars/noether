@@ -52,6 +52,7 @@ endif()
 add_library(
   ${PROJECT_NAME} SHARED
   # Core
+  src/core/face_selection.cpp
   src/core/tool_path_planner_pipeline.cpp
   src/plugin_interface.cpp
   src/splines.cpp
