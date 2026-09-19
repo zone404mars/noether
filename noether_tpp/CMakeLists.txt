@@ -53,7 +53,9 @@ add_library(
   ${PROJECT_NAME} SHARED
   # Core
   src/core/face_selection.cpp
+  src/core/face_coverage.cpp
   src/core/tool_path_planner_pipeline.cpp
+  src/core/tool_path_recipe.cpp
   src/plugin_interface.cpp
   src/splines.cpp
   src/utils.cpp
@@ -83,6 +85,7 @@ add_library(
   src/tool_path_modifiers/moving_average_orientation_smoothing_modifier.cpp
   src/tool_path_modifiers/raster_organization_modifier.cpp
   src/tool_path_modifiers/snake_organization_modifier.cpp
+  src/tool_path_modifiers/start_end_organization_modifier.cpp
   src/tool_path_modifiers/standard_edge_paths_organization_modifier.cpp
   src/tool_path_modifiers/join_close_segments_modifier.cpp
   src/tool_path_modifiers/linear_approach_modifier.cpp
@@ -92,6 +95,7 @@ add_library(
   src/tool_path_modifiers/tool_drag_orientation_modifier.cpp
   src/tool_path_modifiers/uniform_orientation_modifier.cpp
   src/tool_path_modifiers/offset_modifier.cpp
+  src/tool_path_modifiers/occlusion_modifier.cpp
   src/tool_path_modifiers/uniform_spacing_modifier.cpp
   # Tool Path Planners
   src/tool_path_planners/multi_tool_path_planner.cpp

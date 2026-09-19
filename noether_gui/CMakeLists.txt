@@ -19,6 +19,7 @@ find_package(Qt5 REQUIRED COMPONENTS Widgets)
 find_package(yaml-cpp REQUIRED)
 
 option(NOETHER_ENABLE_CLANG_TIDY "Enables compilation with clang-tidy" OFF)
+option(NOETHER_ENABLE_TESTING "Enables compilation with unit tests" OFF)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -35,6 +36,9 @@ add_library(
   src/widgets/tpp_pipeline_widget.cpp
   src/widgets/configurable_tpp_pipeline_widget.cpp
   src/widgets/tpp_widget.cpp
+  src/widgets/path_edit_widget.cpp
+  src/widgets/outline_tool.cpp
+  src/widgets/trace_tool.cpp
   # Tool Path Planners
   # Raster Planner
   src/widgets/tool_path_planners/raster/raster_planner_widget.cpp
@@ -128,6 +132,12 @@ target_clang_tidy(${PROJECT_NAME}_plugins ENABLE ${NOETHER_ENABLE_CLANG_TIDY})
 add_executable(${PROJECT_NAME}_app src/tpp_app.cpp)
 target_link_libraries(${PROJECT_NAME}_app PRIVATE ${PROJECT_NAME} Boost::program_options yaml-cpp)
 target_compile_definitions(${PROJECT_NAME}_app PRIVATE NOETHER_GUI_PLUGINS="${PROJECT_NAME}_plugins")
+
+# Unit tests
+if(${NOETHER_ENABLE_TESTING})
+  enable_testing()
+  add_subdirectory(test)
+endif()
 
 # Install headers
 install(DIRECTORY include/${PROJECT_NAME}/ DESTINATION include/${PROJECT_NAME})

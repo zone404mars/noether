@@ -1,4 +1,5 @@
 #include <noether_gui/widgets/tpp_pipeline_widget.h>
+#include <noether_tpp/tool_path_modifiers/compound_modifier.h>
 #include "ui_tpp_pipeline_widget.h"
 #include <noether_gui/widgets/plugin_loader_widget.h>
 #include <noether_gui/plugin_interface.h>
@@ -14,6 +15,8 @@
 static const std::string MESH_MODIFIERS_KEY = "mesh_modifiers";
 static const std::string TOOL_PATH_PLANNER_KEY = "tool_path_planner";
 static const std::string TOOL_PATH_MODIFIERS_KEY = "tool_path_modifiers";
+static const std::string DIRECTION_GENERATOR_KEY = "direction_generator";
+static const std::string FIXED_DIRECTION_PLUGIN = "FixedDirection";
 
 namespace noether
 {
@@ -156,6 +159,126 @@ ToolPathPlannerPipeline TPPPipelineWidget::createPipeline() const
 {
   YAML::Node config;
   save(config);
+  return ToolPathPlannerPipeline(*factory_, config);
+}
+
+namespace
+{
+/// @brief Greffons d'organisation que le depart et l'arrivee remplacent
+const char* const kOrganizationPlugins[] = { "RasterOrganization", "SnakeOrganization" };
+
+/// @brief Vrai si ce modificateur de la configuration est un organisateur de lignes
+bool isOrganization(const YAML::Node& modifier)
+{
+  const std::string name = modifier["name"].as<std::string>();
+  for (const char* plugin : kOrganizationPlugins)
+  {
+    if (name == plugin)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// @brief `first` suivi des `others` : sans organisateur dans la configuration, le notre passe en
+/// tete, pour voir les lignes telles que le planificateur les rend, avant toute concatenation
+YAML::Node fronted(const YAML::Node& first, const YAML::Node& others)
+{
+  YAML::Node result(YAML::NodeType::Sequence);
+  result.push_back(first);
+  for (const YAML::Node& modifier : others)
+  {
+    result.push_back(modifier);
+  }
+  return result;
+}
+
+/// @brief La liste des modificateurs, les organisateurs remplaces par StartEndOrganization
+YAML::Node withStartEndOrganization(const YAML::Node& modifiers, const Eigen::Vector3d& start, const Eigen::Vector3d& end)
+{
+  YAML::Node organizer;
+  organizer["name"] = "StartEndOrganization";
+  organizer["start"] = start;
+  organizer["end"] = end;
+
+  YAML::Node result(YAML::NodeType::Sequence);
+  bool inserted = false;
+  for (const YAML::Node& modifier : modifiers)
+  {
+    if (!isOrganization(modifier))
+    {
+      result.push_back(modifier);
+    }
+    else if (!inserted)
+    {
+      result.push_back(organizer);
+      inserted = true;
+    }
+  }
+  return inserted ? result : fronted(organizer, result);
+}
+}  // namespace
+
+ToolPathPlannerPipeline TPPPipelineWidget::createPipeline(const Eigen::Vector3d* raster_direction,
+                                                          const Eigen::Vector3d& start,
+                                                          const Eigen::Vector3d& end) const
+{
+  YAML::Node config;
+  save(config);
+  if (raster_direction != nullptr)
+  {
+    YAML::Node planner = config[TOOL_PATH_PLANNER_KEY];
+    if (!planner[DIRECTION_GENERATOR_KEY])
+    {
+      throw std::runtime_error("Planner '" + planner["name"].as<std::string>() +
+                               "' takes no raster direction, so a per-surface direction cannot apply to it.");
+    }
+    YAML::Node direction_generator;
+    direction_generator["name"] = FIXED_DIRECTION_PLUGIN;
+    direction_generator["direction"] = *raster_direction;
+    planner[DIRECTION_GENERATOR_KEY] = direction_generator;
+  }
+  config[TOOL_PATH_MODIFIERS_KEY] = withStartEndOrganization(config[TOOL_PATH_MODIFIERS_KEY], start, end);
+  return ToolPathPlannerPipeline(*factory_, config);
+}
+
+ToolPathModifier::ConstPtr TPPPipelineWidget::createToolPathModifierWithoutOrganization() const
+{
+  // Seul l'onglet des modificateurs de chemin est lu : le planificateur n'est pas sollicite
+  YAML::Node modifiers_config;
+  tool_path_modifier_loader_widget_->save(modifiers_config);
+  std::vector<ToolPathModifier::ConstPtr> modifiers;
+  for (const YAML::Node& modifier : modifiers_config)
+  {
+    if (!isOrganization(modifier))
+    {
+      modifiers.push_back(factory_->createToolPathModifier(modifier));
+    }
+  }
+  return std::make_unique<CompoundModifier>(std::move(modifiers));
+}
+
+ToolPathPlannerPipeline TPPPipelineWidget::createPipeline(const Eigen::Vector3d& raster_direction) const
+{
+  YAML::Node config;
+  save(config);
+
+  YAML::Node planner = config[TOOL_PATH_PLANNER_KEY];
+  if (!planner[DIRECTION_GENERATOR_KEY])
+  {
+    throw std::runtime_error("Planner '" + planner["name"].as<std::string>() +
+                             "' takes no raster direction, so a per-surface direction cannot apply to it.");
+  }
+
+  // Le generateur est REMPLACE, pas regle : celui qui est en place peut etre un generateur
+  // calcule, l'axe principal par exemple, qui n'a aucune direction a recevoir. Fixer la
+  // direction est justement ce que l'appelant demande.
+  YAML::Node direction_generator;
+  direction_generator["name"] = FIXED_DIRECTION_PLUGIN;
+  direction_generator["direction"] = raster_direction;
+  planner[DIRECTION_GENERATOR_KEY] = direction_generator;
+
   return ToolPathPlannerPipeline(*factory_, config);
 }
 

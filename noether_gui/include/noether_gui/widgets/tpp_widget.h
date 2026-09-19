@@ -1,11 +1,18 @@
 #pragma once
 
 #include <noether_tpp/core/face_selection.h>
+#include <noether_gui/widgets/outline_tool.h>
+#include <noether_tpp/core/face_coverage.h>
 #include <noether_tpp/core/types.h>
+#include <noether_tpp/core/tool_path_planner_pipeline.h>
+#include <noether_tpp/core/tool_path_recipe.h>
 #include <Eigen/Core>
 #include <QMainWindow>
 #include <vtkSmartPointer.h>
 #include <pcl/PolygonMesh.h>
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 class QVTKOpenGLNativeWidget;
@@ -13,6 +20,11 @@ class QDir;
 class QComboBox;
 class QDoubleSpinBox;
 class QCheckBox;
+class QLabel;
+class QLayout;
+class QListWidget;
+class QListWidgetItem;
+class QPushButton;
 class vtkActor;
 class vtkPolyDataMapper;
 class vtkProp;
@@ -35,6 +47,7 @@ class TPP;
 namespace noether
 {
 class ConfigurableTPPPipelineWidget;
+class PathEditWidget;
 class WidgetFactory;
 
 enum class LineStyle
@@ -53,8 +66,18 @@ enum class SelectionTool
   Region,
   /** @brief Drag to paint the faces within the brush radius, measured along the surface */
   Brush,
-  /** @brief Drag a freehand outline, select the camera-facing faces inside it */
-  Lasso
+  /**
+   * @brief Click to place the vertices of an outline, close it on its first vertex, with Enter or
+   * a double-click; the camera-facing faces inside are selected
+   */
+  Polygon,
+  /** @brief Drag to erase the work selection within the brush radius */
+  Eraser,
+  /**
+   * @brief Trace le chemin a la main sur la surface selectionnee dans la liste : le premier clic
+   * est le depart, chaque tirage ajoute un segment droit, un point tous les X mm le long
+   */
+  Trace
 };
 
 /**
@@ -103,9 +126,20 @@ public:
   std::vector<ToolPaths> getToolPaths() const { return tool_paths_; }
 
   /**
-   * @brief Saves the created tool paths to a YAML file
+   * @brief Saves the tool paths to a YAML file, and the retouching recipe beside it
+   * @details What is written is the *retouched* path, the one the Trajectory dock shows. The
+   * recipe that turns the generation into it is written to a sibling file, so the delivered path
+   * stays a derived artefact rather than a hand edit nobody can replay. See ::editsFileName.
+   * @param file Destination of the tool path
    */
   void saveToolPaths(const QString& file);
+
+  /**
+   * @brief Name of the recipe file that belongs beside a tool path file
+   * @details `<stem>.edits.yaml`, so the pairing survives whatever name the operator saves under.
+   * @param tool_path_file Destination of the tool path
+   */
+  static QString editsFileName(const QString& tool_path_file);
 
   // Visibility controls
   void showOriginalMesh(const bool);
@@ -121,7 +155,45 @@ protected:
   void onClearSelection(const bool /*checked*/);
   void onSaveModifiedMeshes(const bool /*checked*/);
   void onSaveToolPaths(const bool /*checked*/);
+  void onLoadPathEdits(const bool /*checked*/);
+  /**
+   * @brief Tells the operator what forbids delivering the retouching, if anything does
+   * @details Also covers the absence of any planning at all, the Trajectory dock being the only
+   * thing that carries a generation seen through to the end and the recipe the check reads.
+   * @return True when the retouching may be written out
+   */
+  bool reportRetouchFaults();
+  /** @brief Writes the retouching recipe beside the tool path file just written */
+  void savePathEdits(const QString& tool_path_file);
   void render();
+
+  /**
+   * @brief The passes the Trajectory dock delivers, nested as the file format expects
+   * @details Falls back to the generation itself while no planning has run.
+   */
+  std::vector<ToolPaths> editedToolPaths() const;
+  /** @brief Redraws the retouched path and its highlight after an edit in the Trajectory dock */
+  void onPathEdited();
+  /**
+   * @brief Measures what the disc covers of the planned selection along the delivered path
+   * @details Fills face_uncovered_ and the coverage label; the faces left out are drawn dark.
+   */
+  void updateCoverage();
+  /** @brief Faces of the surfaces that survive the tool radius erosion: what is actually planned */
+  std::vector<int> plannedFaces() const;
+  /** @brief Controls of the Trajectory dock beside the pass list: auto chaining and coverage */
+  void buildCoverageControls();
+  /** @brief Redraws the outline that marks the pass selected in the Trajectory dock */
+  void updatePathHighlight();
+  /**
+   * @brief Asks before a new planning throws away the retouching in the Trajectory dock
+   * @return True when planning may go ahead
+   */
+  bool confirmDiscardPathEdits();
+  /** @brief Drops the planning and its retouching, and takes their actors off the viewer */
+  void clearPlannedPaths();
+  /** @brief Builds the Trajectory dock and wires it to the viewer; called once from the constructor */
+  void buildPathEditDock();
 
   /** @brief Builds the VTK poly data, face adjacency, per-cell color array, and resets the selection */
   void buildSelectionData();
@@ -148,6 +220,25 @@ protected:
   /** @brief Picks the mesh face under a display position; -1 when the ray misses the mesh */
   int pickFace(int x, int y) const;
   /**
+   * @brief Face et point du maillage sous une position d'affichage
+   * @param point Sortie : le point touche, sur la face
+   * @return La face touchee, -1 quand le rayon rate le maillage
+   */
+  int pickPoint(int x, int y, Eigen::Vector3d& point) const;
+  /**
+   * @brief Point 3D sous une position d'affichage, quel que soit l'acteur touche
+   * @details Un point du chemin est dessine par-dessus le maillage : le clic qui le vise touche
+   * la fleche, pas la face. Pour saisir, la position touchee suffit.
+   * @return Vrai quand le rayon touche quelque chose
+   */
+  bool pickAnyPoint(int x, int y, Eigen::Vector3d& point) const;
+  /**
+   * @brief Face planifiable d'une surface la plus proche d'un point
+   * @param kept Faces qui survivent a l'erosion, comme ::erodeSelection les rend
+   * @return -1 quand la surface n'a plus aucune face planifiable
+   */
+  int nearestKeptFace(int surface_id, const Eigen::Vector3d& point, const std::vector<char>& kept) const;
+  /**
    * @brief Paints or erases one brush dab centred on a display position
    * @details Commits into the selection without refreshing the view: the caller refreshes once per
    * mouse event rather than once per dab.
@@ -160,17 +251,179 @@ protected:
    */
   void paintBrushAlongSegment(int x, int y, bool erase);
 
-  /** @brief Camera-facing faces whose centroid projects inside the current lasso outline */
-  std::vector<int> facesInsideLasso() const;
   /**
-   * @brief Appends a point to the lasso outline if it is far enough from the previous one
-   * @return True when the point was kept, so the caller only redraws when the outline changed
+   * @brief Refuses a work selection that is not exactly one continuous patch, saying why
+   * @param piece_count Number of disconnected pieces the work selection is made of
+   * @return True when the selection may become one surface
    */
-  bool extendLasso(int x, int y);
-  /** @brief Commits the lasso selection and clears the outline */
-  void closeLasso(bool erase);
-  /** @brief Rebuilds the 2D outline overlay from lasso_points_, hiding it when too short */
-  void updateLassoOverlay();
+  bool checkPendingIsOneSurface(std::size_t piece_count);
+  /** @brief Validates the work selection as one surface and appends it to the list */
+  void onAddSurface();
+  /** @brief Removes the surface selected in the list and frees its faces */
+  void onRemoveSurface();
+
+  /** @brief Builds the per-surface raster direction controls sitting under the surface list */
+  QWidget* buildSurfaceDirectionPanel();
+  /** @brief Fills the raster direction selector with its five entries */
+  void populateDirectionSelector();
+  /** @brief Builds the row of spin boxes holding a hand-typed raster direction */
+  QLayout* buildDirectionComponents();
+  /**
+   * @brief Records the raster direction a selector entry stands for
+   * @param surface_id Surface the direction belongs to
+   * @param entry Selector entry the operator picked
+   */
+  void storeSurfaceDirection(int surface_id, int entry);
+  /**
+   * @brief Shows a raster direction in the controls without writing it back to any surface
+   * @param direction Direction to show in the spin boxes
+   * @param entry Selector entry to pick; the spin boxes are only editable on the free choice
+   */
+  void showDirection(const Eigen::Vector3d& direction, int entry);
+  /** @brief Shows the raster direction of the surface just picked in the list */
+  void onSurfaceSelected();
+  /** @brief Stores the raster direction the controls now read, for the selected surface */
+  void onSurfaceDirectionEdited();
+  /**
+   * @brief Raster direction chosen for a surface
+   * @param surface_id Surface to look up
+   * @param direction Out: the direction, untouched when the surface follows the pipeline
+   * @return True when the surface carries a direction of its own
+   */
+  bool surfaceDirection(int surface_id, Eigen::Vector3d& direction) const;
+  /** @brief Rewrites a surface's list entry: its rank, its face count and its raster direction */
+  void relabelSurface(QListWidgetItem* item) const;
+
+  /** @brief Ce que le prochain clic dans la vue designe pour la surface selectionnee */
+  enum class EndpointPick
+  {
+    None,
+    Start,
+    End
+  };
+  /** @brief Boutons du dock Surfaces qui arment le choix du depart et de l'arrivee */
+  QWidget* buildSurfaceEndpointPanel();
+  /** @brief Branche les trois boutons de depart et d'arrivee */
+  void connectEndpointButtons();
+  /** @brief Points de depart et d'arrivee de toutes les surfaces, colores, prets a dessiner */
+  vtkSmartPointer<vtkPolyData> endpointMarkerPoints() const;
+  /** @brief Enregistre la face cliquee comme depart ou arrivee de la surface selectionnee */
+  void onEndpointPicked(int face);
+  /** @brief Oublie le depart et l'arrivee de la surface selectionnee dans la liste */
+  void clearSelectedSurfaceEndpoints();
+  /** @brief Redessine les marques de depart (vert) et d'arrivee (rouge) de toutes les surfaces */
+  void updateEndpointMarkers();
+  /**
+   * @brief Depart et arrivee fixes pour une surface
+   * @return Vrai quand les deux sont fixes ; il faut les deux pour organiser le chemin
+   */
+  bool surfaceEndpoints(int surface_id, Eigen::Vector3d& start, Eigen::Vector3d& end) const;
+  /** @brief Phrase du bandeau d'etat : ou le chemin d'une surface commence et finit vraiment */
+  QString describeEndpointGaps(int surface_id, const ToolPaths& delivered) const;
+
+  /** @brief Identifiant de la surface selectionnee dans la liste, -1 sans selection */
+  int selectedSurfaceId() const;
+  /** @brief Reglage du pas du trace manuel dans la barre d'outils */
+  void buildTraceControls();
+  /** @brief Debut d'un tirage du trace : fixe le depart si le trace est vide, sinon amorce un segment */
+  void onTraceDragStart(int x, int y);
+  /** @brief Suite du tirage : deplace la fin provisoire du segment sur la surface */
+  void onTraceDragMove(int x, int y);
+  /** @brief Fin du tirage : le segment provisoire devient un sommet du trace */
+  void onTraceDragEnd();
+  /** @brief Touches du trace : Retour arriere retire le dernier sommet, Echap efface le trace */
+  void onTraceKey(const std::string& key);
+  /** @brief Sommets du trace de la surface selectionnee, suivis de la fin provisoire du tirage en cours */
+  std::vector<Eigen::Vector3d> traceVerticesWithPreview(int surface_id) const;
+  /**
+   * @brief Points du trace de la surface selectionnee, tirage en cours compris, ramenes sur la surface
+   * @param normals Sortie : normale de la face sous chaque point
+   */
+  std::vector<Eigen::Vector3d> projectedTraceSamples(int surface_id, std::vector<Eigen::Vector3d>& normals) const;
+  /** @brief Redessine les points, les lignes et les cercles du disque du trace de la surface selectionnee */
+  void updateTraceMarkers();
+  /** @brief Cercles du disque autour de points poses a plat sur la surface, dans le plan de chaque normale */
+  vtkSmartPointer<vtkPolyData> flatDiscCircles(const std::vector<Eigen::Vector3d>& points,
+                                               const std::vector<Eigen::Vector3d>& normals) const;
+
+  /** @brief Vrai quand le bouton « Deplacer des points » est enfonce : le tirage saisit une pose */
+  bool movingPoints() const;
+  /** @brief Debut d'un tirage en mode deplacement : saisit la pose livree la plus proche du clic */
+  void onPointDragStart(int x, int y);
+  /** @brief Suite du tirage : la pose saisie suit le curseur sur le maillage, z le long de la face */
+  void onPointDragMove(int x, int y);
+  /** @brief Fin du tirage : la pose deplacee entre dans la retouche, le chemin est reconstruit une fois */
+  void onPointDragEnd();
+  /**
+   * @brief Bouton « Valider la nouvelle disposition » : sort du mode deplacement et confirme
+   * @details Les poses deplacees font deja partie du chemin livre, donc du fichier ecrit par
+   * Save tool paths ; le bouton rend cette prise en compte explicite et rend le tirage aux outils.
+   */
+  void validateLayout();
+  /**
+   * @brief Redessine la marque de la pose saisie et son cercle
+   * @details Pendant le tirage, seuls ces deux acteurs bougent : reconstruire le chemin, la
+   * couverture et tous les cercles a chaque mouvement de souris rendrait le geste saccade.
+   */
+  void updateGrabMarker();
+  /**
+   * @brief Dessine un cercle de rayon outil autour de chaque point de contact du chemin livre
+   * @details Le cercle est dans le plan de la pose : c'est l'empreinte du disque pose la. Il
+   * montre d'un coup d'oeil un point trop pres d'un bord ou d'un relief. Rien n'est calcule
+   * contre la piece, c'est une aide visuelle. Efface sans chemin, sans rayon, ou case decochee.
+   */
+  void updateDiscCircles();
+  /**
+   * @brief Ramene des points sur une surface : chacun sur le point le plus proche de ses faces
+   * @details Les points d'un trace sont poses sur la corde entre deux sommets ; sur une surface
+   * courbe la corde passe dessous. Le point projete et la normale de la face touchee donnent la
+   * pose reelle de l'outil.
+   * @param points Entree : points a projeter ; sortie : leurs projetes
+   * @param normals Sortie : normale de la face portant chaque projete
+   */
+  void projectOnSurface(int surface_id, std::vector<Eigen::Vector3d>& points, std::vector<Eigen::Vector3d>& normals) const;
+  /** @brief Mention du trace manuel dans l'entree de liste d'une surface, vide sans trace */
+  QString describeTrace(int surface_id) const;
+  /** @brief Vrai quand la surface porte un trace manuel d'au moins deux sommets */
+  bool surfaceHasTrace(int surface_id) const;
+  /**
+   * @brief Pipeline propre a une surface qui ne suit pas la configuration telle quelle
+   * @details Depart et arrivee : StartEndOrganization. Sinon : la direction seule. A n'appeler
+   * que si l'un des deux est vrai.
+   */
+  ToolPathPlannerPipeline surfacePipeline(bool has_direction,
+                                          bool has_endpoints,
+                                          const Eigen::Vector3d& direction,
+                                          const Eigen::Vector3d& start,
+                                          const Eigen::Vector3d& end) const;
+  /**
+   * @brief Planifie une surface tracee a la main : le trace, puis les modificateurs sans organisateur
+   * @details Aucun parametre du planificateur n'est lu. Ajoute le fragment, le chemin brut et le
+   * chemin livre aux listes de la generation en cours.
+   * @param faces Faces de la surface, pour le fragment affiche
+   * @param unmodified Sortie : chemins bruts de la generation en cours
+   */
+  void planTracedSurface(int surface_id, const std::vector<int>& faces, std::vector<ToolPaths>& unmodified);
+  /** @brief Vrai quand au moins une surface de la liste n'est pas tracee a la main : le planificateur sert */
+  bool anySurfaceNeedsPlanner(const std::map<int, std::vector<int>>& region_faces) const;
+  /** @brief Le trace manuel d'une surface, echantillonne au pas choisi, en un seul segment de poses */
+  ToolPaths tracedToolPaths(int surface_id) const;
+
+  /** @brief Adds or removes faces of the work selection; faces owned by a surface are skipped */
+  void paintPending(const std::vector<int>& faces, bool erase);
+  /** @brief Connected components of the work selection, over the face adjacency */
+  std::vector<std::vector<int>> pendingComponents() const;
+
+  /** @brief Camera-facing faces whose centroid projects inside the outline being traced */
+  std::vector<int> facesInsideOutline() const;
+  /** @brief A click of the polygon tool: adds a vertex, or closes the outline when it lands on the first one */
+  void onOutlineClick(int x, int y, bool erase, bool double_click);
+  /** @brief Keys of the polygon tool: Enter closes, Backspace removes the last vertex, Escape clears */
+  void onKeyPressed(const std::string& key, bool shift);
+  /** @brief Commits the faces inside the outline and clears it */
+  void closeOutline(bool erase);
+  /** @brief Rebuilds the 2D outline overlay from the outline vertices, hiding it when too short */
+  void updateOutlineOverlay();
   /** @brief Enables the reading that governs the active tool and greys out the others */
   void updateToolControls();
 
@@ -197,6 +450,8 @@ protected:
   vtkSmartPointer<vtkPropAssembly> unmodified_tool_path_actor_;
   vtkSmartPointer<vtkPropAssembly> unmodified_connected_path_actor_;
   vtkSmartPointer<vtkPropAssembly> mesh_fragment_actor_;
+  /** @brief Outline drawn over the pass selected in the Trajectory dock */
+  vtkSmartPointer<vtkPropAssembly> highlight_actor_;
 
   vtkSmartPointer<vtkAxes> axes_;
   vtkSmartPointer<vtkAxesActor> axes_actor_;
@@ -219,23 +474,25 @@ protected:
   std::vector<Eigen::Vector3d> face_normals_;
   /** @brief Centroid of each face (parallel to mesh_.polygons), for geodesic distances */
   std::vector<Eigen::Vector3d> face_centroids_;
-  /** @brief For each face, the id of the selected region it belongs to, or -1 if unselected */
+  /** @brief For each face, the id of the added surface it belongs to, or -1 if free */
   std::vector<int> face_region_;
+  /** @brief Work selection being built by the tools; faces here are not yet part of any surface */
+  std::vector<char> pending_faces_;
+  /** @brief Planned faces the disc never reaches along the delivered path; empty without a path */
+  std::vector<char> face_uncovered_;
   /** @brief Monotonically increasing id assigned to each newly selected region (for coloring) */
   int next_region_id_ = 0;
 
   /** @brief Tool the left mouse button drives in the 3D view */
   SelectionTool tool_ = SelectionTool::Region;
-  /** @brief Region the current stroke paints into; negative until the first dab lands on the mesh */
-  int stroke_region_ = -1;
   /** @brief Display position of the last drag event, to paint the gap up to the next one */
   Eigen::Vector2d drag_position_ = Eigen::Vector2d::Zero();
-  /** @brief Freehand lasso outline being drawn, in display coordinates */
-  std::vector<Eigen::Vector2d> lasso_points_;
+  /** @brief Outline being traced by the polygon tool, in display coordinates */
+  OutlineBuilder outline_;
   /** @brief Closed polyline of the outline being traced, in display coordinates */
-  vtkSmartPointer<vtkPolyData> lasso_poly_;
-  vtkSmartPointer<vtkPolyDataMapper2D> lasso_mapper_;
-  vtkSmartPointer<vtkActor2D> lasso_actor_;
+  vtkSmartPointer<vtkPolyData> outline_poly_;
+  vtkSmartPointer<vtkPolyDataMapper2D> outline_mapper_;
+  vtkSmartPointer<vtkActor2D> outline_actor_;
 
   /** @brief Toolbar selector for the active selection tool */
   QComboBox* tool_combo_box_ = nullptr;
@@ -247,6 +504,75 @@ protected:
   QDoubleSpinBox* tool_radius_spin_box_ = nullptr;
   /** @brief Check box enabling/disabling the tool-radius erosion */
   QCheckBox* tool_radius_enabled_check_box_ = nullptr;
+  /** @brief One entry per added surface; the item data carries the surface id */
+  QListWidget* surface_list_ = nullptr;
+  /** @brief Toolbar button validating the work selection into the list */
+  QPushButton* add_surface_button_ = nullptr;
+  /** @brief Button under the list removing the selected surface */
+  QPushButton* remove_surface_button_ = nullptr;
+  /**
+   * @brief Raster direction of the surfaces that carry one of their own, by surface id
+   * @details A surface absent from here follows the direction the pipeline configuration gives,
+   * which is also what every surface does until the operator says otherwise.
+   */
+  std::map<int, Eigen::Vector3d> surface_directions_;
+  /** @brief Point de depart demande par surface, centroide de la face cliquee */
+  std::map<int, Eigen::Vector3d> surface_starts_;
+  /** @brief Point d'arrivee demande par surface */
+  std::map<int, Eigen::Vector3d> surface_ends_;
+  /** @brief Ce que le prochain clic designe */
+  EndpointPick endpoint_pick_ = EndpointPick::None;
+  QPushButton* pick_start_button_ = nullptr;
+  QPushButton* pick_end_button_ = nullptr;
+  QPushButton* clear_endpoints_button_ = nullptr;
+  /** @brief Marques de depart et d'arrivee dans la vue */
+  vtkSmartPointer<vtkActor> endpoint_actor_;
+  /** @brief Sommets du trace manuel par surface, dans l'ordre de parcours */
+  std::map<int, std::vector<Eigen::Vector3d>> surface_traces_;
+  /** @brief Vrai pendant un tirage du trace : trace_preview_end_ vaut alors quelque chose */
+  bool trace_preview_active_ = false;
+  /** @brief Fin provisoire du segment en cours de tirage, sur la surface */
+  Eigen::Vector3d trace_preview_end_ = Eigen::Vector3d::Zero();
+  /** @brief Espacement des points du trace manuel, en millimetres */
+  QDoubleSpinBox* trace_step_spin_box_ = nullptr;
+  /** @brief Points du trace manuel dans la vue */
+  vtkSmartPointer<vtkActor> trace_actor_;
+  /** @brief Lignes du trace manuel, de point en point */
+  vtkSmartPointer<vtkActor> trace_line_actor_;
+  /** @brief Cercles du disque autour des points du chemin livre */
+  vtkSmartPointer<vtkActor> disc_actor_;
+  /** @brief Affiche ou cache les cercles du disque */
+  QCheckBox* show_discs_check_box_ = nullptr;
+  /** @brief Cercles du disque le long du trace en cours */
+  vtkSmartPointer<vtkActor> trace_disc_actor_;
+  /** @brief Bouton a bascule du dock Trajectoire : le tirage deplace des poses du chemin livre */
+  QPushButton* move_points_button_ = nullptr;
+  /** @brief Pose de la generation saisie par le tirage en cours */
+  PoseMove grabbed_;
+  /** @brief Vrai pendant un tirage qui deplace une pose */
+  bool grab_active_ = false;
+  /** @brief Position de la pose saisie avant le tirage : son cercle cyan est cache pendant qu'elle bouge */
+  Eigen::Vector3d grab_origin_ = Eigen::Vector3d::Zero();
+  /** @brief Bouton du dock Trajectoire qui clot le deplacement de points et confirme la disposition */
+  QPushButton* validate_layout_button_ = nullptr;
+  /** @brief Marque de la pose saisie */
+  vtkSmartPointer<vtkActor> grab_actor_;
+  /** @brief Cercle du disque de la pose saisie, qui suit le tirage */
+  vtkSmartPointer<vtkActor> grab_disc_actor_;
+  /** @brief Selector of the raster direction applied to the surface picked in the list */
+  QComboBox* surface_direction_combo_box_ = nullptr;
+  /** @brief Components of a raster direction typed by hand, in the mesh frame */
+  QDoubleSpinBox* direction_x_spin_box_ = nullptr;
+  QDoubleSpinBox* direction_y_spin_box_ = nullptr;
+  QDoubleSpinBox* direction_z_spin_box_ = nullptr;
+  /** @brief Panel where the operator retouches the planned path */
+  PathEditWidget* path_edit_ = nullptr;
+  /** @brief Button in the Trajectory dock reading a recipe back from a file */
+  QPushButton* load_edits_button_ = nullptr;
+  /** @brief Coverage of the planned selection by the disc along the delivered path */
+  QLabel* coverage_label_ = nullptr;
+  /** @brief Chains every pass into one right after planning */
+  QCheckBox* auto_chain_check_box_ = nullptr;
   /** @brief The submeshes planned in the last plan() call (one per selected region), for display/save */
   std::vector<pcl::PolygonMesh> fragments_;
 };

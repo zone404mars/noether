@@ -45,6 +45,7 @@
 #include <noether_tpp/tool_path_modifiers/offset_modifier.h>
 #include <noether_tpp/tool_path_modifiers/raster_organization_modifier.h>
 #include <noether_tpp/tool_path_modifiers/snake_organization_modifier.h>
+#include <noether_tpp/tool_path_modifiers/start_end_organization_modifier.h>
 #include <noether_tpp/tool_path_modifiers/spline_extrapolation_modifier.h>
 #include <noether_tpp/tool_path_modifiers/standard_edge_paths_organization_modifier.h>
 #include <noether_tpp/tool_path_modifiers/tool_drag_orientation_modifier.h>
@@ -195,6 +196,7 @@ EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(MovingAverageOrientationSmoothingModifie
 EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(OffsetModifier, Offset)
 EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(RasterOrganizationModifier, RasterOrganization)
 EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(SnakeOrganizationModifier, SnakeOrganization)
+EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(StartEndOrganizationModifier, StartEndOrganization)
 EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(StandardEdgePathsOrganizationModifier, StandardEdgePathsOrganization)
 EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(ToolDragOrientationToolPathModifier, ToolDragOrientation)
 EXPORT_SIMPLE_TOOL_PATH_MODIFIER_PLUGIN(UniformOrientationModifier, UniformOrientation)
