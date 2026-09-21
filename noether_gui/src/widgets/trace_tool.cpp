@@ -123,4 +123,26 @@ ToolPathSegment tracePoses(const std::vector<Eigen::Vector3d>& points, const std
   return poses;
 }
 
+ToolPathSegment withApproachAndRetract(const ToolPathSegment& contact, const double height)
+{
+  if (contact.empty())
+  {
+    throw std::invalid_argument("Il faut au moins une pose de contact pour poser l'approche et le retrait");
+  }
+  if (!(height > 0.0))
+  {
+    throw std::invalid_argument("La hauteur d'approche doit etre strictement positive");
+  }
+  Eigen::Isometry3d approach = contact.front();
+  approach.translation() += approach.linear().col(2) * height;
+  Eigen::Isometry3d retract = contact.back();
+  retract.translation() += retract.linear().col(2) * height;
+
+  ToolPathSegment pass;
+  pass.push_back(approach);
+  pass.insert(pass.end(), contact.begin(), contact.end());
+  pass.push_back(retract);
+  return pass;
+}
+
 }  // namespace noether

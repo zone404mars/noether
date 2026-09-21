@@ -72,12 +72,7 @@ enum class SelectionTool
    */
   Polygon,
   /** @brief Drag to erase the work selection within the brush radius */
-  Eraser,
-  /**
-   * @brief Trace le chemin a la main sur la surface selectionnee dans la liste : le premier clic
-   * est le depart, chaque tirage ajoute un segment droit, un point tous les X mm le long
-   */
-  Trace
+  Eraser
 };
 
 /**
@@ -126,6 +121,16 @@ public:
   std::vector<ToolPaths> getToolPaths() const { return tool_paths_; }
 
   /**
+   * @brief Charge un chemin d'outil deja enregistre pour le retoucher
+   * @details Les passes du fichier prennent la place d'une generation : le dock Trajectoire les
+   * recoit telles quelles, approche et retrait compris, et tout ce qu'il permet s'applique
+   * (ordre, suppression, deplacement de points). Save tool paths reecrit le resultat.
+   * @param file Fichier YAML ecrit par Save tool paths, ou par la cellule
+   * @throws std::runtime_error si le fichier ne se lit pas comme un chemin d'outil
+   */
+  void loadToolPaths(const QString& file);
+
+  /**
    * @brief Saves the tool paths to a YAML file, and the retouching recipe beside it
    * @details What is written is the *retouched* path, the one the Trajectory dock shows. The
    * recipe that turns the generation into it is written to a sibling file, so the delivered path
@@ -155,7 +160,8 @@ protected:
   void onClearSelection(const bool /*checked*/);
   void onSaveModifiedMeshes(const bool /*checked*/);
   void onSaveToolPaths(const bool /*checked*/);
-  void onLoadPathEdits(const bool /*checked*/);
+  /** @brief Bouton « Charger un chemin » : choisit le fichier puis appelle ::loadToolPaths */
+  void onLoadToolPaths();
   /**
    * @brief Tells the operator what forbids delivering the retouching, if anything does
    * @details Also covers the absence of any planning at all, the Trajectory dock being the only
@@ -174,15 +180,6 @@ protected:
   std::vector<ToolPaths> editedToolPaths() const;
   /** @brief Redraws the retouched path and its highlight after an edit in the Trajectory dock */
   void onPathEdited();
-  /**
-   * @brief Measures what the disc covers of the planned selection along the delivered path
-   * @details Fills face_uncovered_ and the coverage label; the faces left out are drawn dark.
-   */
-  void updateCoverage();
-  /** @brief Faces of the surfaces that survive the tool radius erosion: what is actually planned */
-  std::vector<int> plannedFaces() const;
-  /** @brief Controls of the Trajectory dock beside the pass list: auto chaining and coverage */
-  void buildCoverageControls();
   /** @brief Redraws the outline that marks the pass selected in the Trajectory dock */
   void updatePathHighlight();
   /**
@@ -233,12 +230,6 @@ protected:
    */
   bool pickAnyPoint(int x, int y, Eigen::Vector3d& point) const;
   /**
-   * @brief Face planifiable d'une surface la plus proche d'un point
-   * @param kept Faces qui survivent a l'erosion, comme ::erodeSelection les rend
-   * @return -1 quand la surface n'a plus aucune face planifiable
-   */
-  int nearestKeptFace(int surface_id, const Eigen::Vector3d& point, const std::vector<char>& kept) const;
-  /**
    * @brief Paints or erases one brush dab centred on a display position
    * @details Commits into the selection without refreshing the view: the caller refreshes once per
    * mouse event rather than once per dab.
@@ -262,69 +253,32 @@ protected:
   /** @brief Removes the surface selected in the list and frees its faces */
   void onRemoveSurface();
 
-  /** @brief Builds the per-surface raster direction controls sitting under the surface list */
-  QWidget* buildSurfaceDirectionPanel();
-  /** @brief Fills the raster direction selector with its five entries */
-  void populateDirectionSelector();
-  /** @brief Builds the row of spin boxes holding a hand-typed raster direction */
-  QLayout* buildDirectionComponents();
-  /**
-   * @brief Records the raster direction a selector entry stands for
-   * @param surface_id Surface the direction belongs to
-   * @param entry Selector entry the operator picked
-   */
-  void storeSurfaceDirection(int surface_id, int entry);
-  /**
-   * @brief Shows a raster direction in the controls without writing it back to any surface
-   * @param direction Direction to show in the spin boxes
-   * @param entry Selector entry to pick; the spin boxes are only editable on the free choice
-   */
-  void showDirection(const Eigen::Vector3d& direction, int entry);
-  /** @brief Shows the raster direction of the surface just picked in the list */
-  void onSurfaceSelected();
-  /** @brief Stores the raster direction the controls now read, for the selected surface */
-  void onSurfaceDirectionEdited();
-  /**
-   * @brief Raster direction chosen for a surface
-   * @param surface_id Surface to look up
-   * @param direction Out: the direction, untouched when the surface follows the pipeline
-   * @return True when the surface carries a direction of its own
-   */
-  bool surfaceDirection(int surface_id, Eigen::Vector3d& direction) const;
-  /** @brief Rewrites a surface's list entry: its rank, its face count and its raster direction */
+  /** @brief Rewrites a surface's list entry: its rank, its face count and its trace */
   void relabelSurface(QListWidgetItem* item) const;
-
-  /** @brief Ce que le prochain clic dans la vue designe pour la surface selectionnee */
-  enum class EndpointPick
-  {
-    None,
-    Start,
-    End
-  };
-  /** @brief Boutons du dock Surfaces qui arment le choix du depart et de l'arrivee */
-  QWidget* buildSurfaceEndpointPanel();
-  /** @brief Branche les trois boutons de depart et d'arrivee */
-  void connectEndpointButtons();
-  /** @brief Points de depart et d'arrivee de toutes les surfaces, colores, prets a dessiner */
-  vtkSmartPointer<vtkPolyData> endpointMarkerPoints() const;
-  /** @brief Enregistre la face cliquee comme depart ou arrivee de la surface selectionnee */
-  void onEndpointPicked(int face);
-  /** @brief Oublie le depart et l'arrivee de la surface selectionnee dans la liste */
-  void clearSelectedSurfaceEndpoints();
-  /** @brief Redessine les marques de depart (vert) et d'arrivee (rouge) de toutes les surfaces */
-  void updateEndpointMarkers();
+  /** @brief Vrai quand le bouton « Trace manuel » de l'onglet Traitement est enfonce */
+  bool tracing() const;
+  /** @brief Onglet Traitement : le trace manuel, son pas et ses corrections */
+  void buildTreatmentDock();
+  /** @brief Contenu de l'onglet Traitement */
+  QWidget* buildTreatmentPanel();
+  /** @brief Le bouton Trace manuel change d'etat : il prend ou rend le tirage de la vue */
+  void onTraceToggled(bool checked);
+  /** @brief Le bouton Deplacer des points change d'etat : il prend ou rend le tirage de la vue */
+  void onMovePointsToggled(bool checked);
   /**
-   * @brief Depart et arrivee fixes pour une surface
-   * @return Vrai quand les deux sont fixes ; il faut les deux pour organiser le chemin
+   * @brief Genere chaque surface tracee, dans l'ordre des surfaces
+   * @param unmodified Sortie : chemins bruts de la generation
+   * @return Les surfaces sans trace, qui n'ont rien produit
    */
-  bool surfaceEndpoints(int surface_id, Eigen::Vector3d& start, Eigen::Vector3d& end) const;
-  /** @brief Phrase du bandeau d'etat : ou le chemin d'une surface commence et finit vraiment */
-  QString describeEndpointGaps(int surface_id, const ToolPaths& delivered) const;
+  std::vector<int> planTracedSurfaces(std::vector<ToolPaths>& unmodified);
+  /** @brief Met les fragments et les chemins dans la vue, et les passes dans le dock Trajectoire */
+  void showPlannedPaths(const std::vector<ToolPaths>& unmodified);
+  /** @brief Dit a l'operateur quelles surfaces n'ont pas ete generees, faute de trace */
+  void reportUntracedSurfaces(const std::vector<int>& untraced);
+
 
   /** @brief Identifiant de la surface selectionnee dans la liste, -1 sans selection */
   int selectedSurfaceId() const;
-  /** @brief Reglage du pas du trace manuel dans la barre d'outils */
-  void buildTraceControls();
   /** @brief Debut d'un tirage du trace : fixe le depart si le trace est vide, sinon amorce un segment */
   void onTraceDragStart(int x, int y);
   /** @brief Suite du tirage : deplace la fin provisoire du segment sur la surface */
@@ -348,8 +302,22 @@ protected:
 
   /** @brief Vrai quand le bouton « Deplacer des points » est enfonce : le tirage saisit une pose */
   bool movingPoints() const;
-  /** @brief Debut d'un tirage en mode deplacement : saisit la pose livree la plus proche du clic */
+  /** @brief Debut d'un tirage en mode deplacement : saisit la pose de contact la plus proche du clic */
   void onPointDragStart(int x, int y);
+  /**
+   * @brief Pose de contact la plus proche d'un point, dans la generation deplacee
+   * @details Les poses d'approche et de retrait (kSkirtPoses a chaque bout) ne se saisissent pas :
+   * elles suivent la pose de contact voisine, voir ::moveSkirtPoses.
+   * @return Vrai quand une pose de contact est a moins de kGrabToleranceM
+   */
+  bool locateContactPose(const Eigen::Vector3d& clicked, PoseMove& found) const;
+  /**
+   * @brief Fait suivre l'approche ou le retrait a la pose de contact qui vient d'etre posee
+   * @details Si la pose deplacee est la premiere de contact, l'approche garde, dans le repere de
+   * cette pose, la place qu'elle avait : meme hauteur, meme axe. Idem pour le retrait derriere la
+   * derniere pose de contact.
+   */
+  void moveSkirtPoses();
   /** @brief Suite du tirage : la pose saisie suit le curseur sur le maillage, z le long de la face */
   void onPointDragMove(int x, int y);
   /** @brief Fin du tirage : la pose deplacee entre dans la retouche, le chemin est reconstruit une fois */
@@ -387,25 +355,14 @@ protected:
   /** @brief Vrai quand la surface porte un trace manuel d'au moins deux sommets */
   bool surfaceHasTrace(int surface_id) const;
   /**
-   * @brief Pipeline propre a une surface qui ne suit pas la configuration telle quelle
-   * @details Depart et arrivee : StartEndOrganization. Sinon : la direction seule. A n'appeler
-   * que si l'un des deux est vrai.
-   */
-  ToolPathPlannerPipeline surfacePipeline(bool has_direction,
-                                          bool has_endpoints,
-                                          const Eigen::Vector3d& direction,
-                                          const Eigen::Vector3d& start,
-                                          const Eigen::Vector3d& end) const;
-  /**
-   * @brief Planifie une surface tracee a la main : le trace, puis les modificateurs sans organisateur
-   * @details Aucun parametre du planificateur n'est lu. Ajoute le fragment, le chemin brut et le
-   * chemin livre aux listes de la generation en cours.
+   * @brief Planifie une surface tracee a la main : le trace, une approche devant, un retrait derriere
+   * @details Aucun parametre de Noether n'est lu : ni planificateur, ni modificateurs de chemin.
+   * L'approche et le retrait sont poses a la hauteur de l'onglet Traitement. Ajoute le fragment,
+   * le chemin brut et le chemin livre aux listes de la generation en cours.
    * @param faces Faces de la surface, pour le fragment affiche
    * @param unmodified Sortie : chemins bruts de la generation en cours
    */
   void planTracedSurface(int surface_id, const std::vector<int>& faces, std::vector<ToolPaths>& unmodified);
-  /** @brief Vrai quand au moins une surface de la liste n'est pas tracee a la main : le planificateur sert */
-  bool anySurfaceNeedsPlanner(const std::map<int, std::vector<int>>& region_faces) const;
   /** @brief Le trace manuel d'une surface, echantillonne au pas choisi, en un seul segment de poses */
   ToolPaths tracedToolPaths(int surface_id) const;
 
@@ -478,8 +435,6 @@ protected:
   std::vector<int> face_region_;
   /** @brief Work selection being built by the tools; faces here are not yet part of any surface */
   std::vector<char> pending_faces_;
-  /** @brief Planned faces the disc never reaches along the delivered path; empty without a path */
-  std::vector<char> face_uncovered_;
   /** @brief Monotonically increasing id assigned to each newly selected region (for coloring) */
   int next_region_id_ = 0;
 
@@ -510,23 +465,6 @@ protected:
   QPushButton* add_surface_button_ = nullptr;
   /** @brief Button under the list removing the selected surface */
   QPushButton* remove_surface_button_ = nullptr;
-  /**
-   * @brief Raster direction of the surfaces that carry one of their own, by surface id
-   * @details A surface absent from here follows the direction the pipeline configuration gives,
-   * which is also what every surface does until the operator says otherwise.
-   */
-  std::map<int, Eigen::Vector3d> surface_directions_;
-  /** @brief Point de depart demande par surface, centroide de la face cliquee */
-  std::map<int, Eigen::Vector3d> surface_starts_;
-  /** @brief Point d'arrivee demande par surface */
-  std::map<int, Eigen::Vector3d> surface_ends_;
-  /** @brief Ce que le prochain clic designe */
-  EndpointPick endpoint_pick_ = EndpointPick::None;
-  QPushButton* pick_start_button_ = nullptr;
-  QPushButton* pick_end_button_ = nullptr;
-  QPushButton* clear_endpoints_button_ = nullptr;
-  /** @brief Marques de depart et d'arrivee dans la vue */
-  vtkSmartPointer<vtkActor> endpoint_actor_;
   /** @brief Sommets du trace manuel par surface, dans l'ordre de parcours */
   std::map<int, std::vector<Eigen::Vector3d>> surface_traces_;
   /** @brief Vrai pendant un tirage du trace : trace_preview_end_ vaut alors quelque chose */
@@ -535,14 +473,16 @@ protected:
   Eigen::Vector3d trace_preview_end_ = Eigen::Vector3d::Zero();
   /** @brief Espacement des points du trace manuel, en millimetres */
   QDoubleSpinBox* trace_step_spin_box_ = nullptr;
+  /** @brief Bouton a bascule de l'onglet Traitement : le tirage trace sur la surface selectionnee */
+  QPushButton* trace_button_ = nullptr;
+  /** @brief Hauteur de l'approche et du retrait au-dessus du premier et du dernier point, en millimetres */
+  QDoubleSpinBox* approach_height_spin_box_ = nullptr;
   /** @brief Points du trace manuel dans la vue */
   vtkSmartPointer<vtkActor> trace_actor_;
   /** @brief Lignes du trace manuel, de point en point */
   vtkSmartPointer<vtkActor> trace_line_actor_;
   /** @brief Cercles du disque autour des points du chemin livre */
   vtkSmartPointer<vtkActor> disc_actor_;
-  /** @brief Affiche ou cache les cercles du disque */
-  QCheckBox* show_discs_check_box_ = nullptr;
   /** @brief Cercles du disque le long du trace en cours */
   vtkSmartPointer<vtkActor> trace_disc_actor_;
   /** @brief Bouton a bascule du dock Trajectoire : le tirage deplace des poses du chemin livre */
@@ -553,26 +493,18 @@ protected:
   bool grab_active_ = false;
   /** @brief Position de la pose saisie avant le tirage : son cercle cyan est cache pendant qu'elle bouge */
   Eigen::Vector3d grab_origin_ = Eigen::Vector3d::Zero();
+  /** @brief Passe de la generation deplacee telle qu'elle etait a la saisie, pour y lire l'approche et le retrait */
+  ToolPathSegment grab_segment_before_;
   /** @brief Bouton du dock Trajectoire qui clot le deplacement de points et confirme la disposition */
   QPushButton* validate_layout_button_ = nullptr;
+  /** @brief Bouton du dock Trajectoire qui charge un chemin deja enregistre */
+  QPushButton* load_tool_paths_button_ = nullptr;
   /** @brief Marque de la pose saisie */
   vtkSmartPointer<vtkActor> grab_actor_;
   /** @brief Cercle du disque de la pose saisie, qui suit le tirage */
   vtkSmartPointer<vtkActor> grab_disc_actor_;
-  /** @brief Selector of the raster direction applied to the surface picked in the list */
-  QComboBox* surface_direction_combo_box_ = nullptr;
-  /** @brief Components of a raster direction typed by hand, in the mesh frame */
-  QDoubleSpinBox* direction_x_spin_box_ = nullptr;
-  QDoubleSpinBox* direction_y_spin_box_ = nullptr;
-  QDoubleSpinBox* direction_z_spin_box_ = nullptr;
   /** @brief Panel where the operator retouches the planned path */
   PathEditWidget* path_edit_ = nullptr;
-  /** @brief Button in the Trajectory dock reading a recipe back from a file */
-  QPushButton* load_edits_button_ = nullptr;
-  /** @brief Coverage of the planned selection by the disc along the delivered path */
-  QLabel* coverage_label_ = nullptr;
-  /** @brief Chains every pass into one right after planning */
-  QCheckBox* auto_chain_check_box_ = nullptr;
   /** @brief The submeshes planned in the last plan() call (one per selected region), for display/save */
   std::vector<pcl::PolygonMesh> fragments_;
 };

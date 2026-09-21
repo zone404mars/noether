@@ -114,6 +114,15 @@ void PathEditWidget::buildControls()
   connectControls();
 }
 
+void PathEditWidget::hideAdvancedControls()
+{
+  for (QPushButton* button : { reverse_button_, weld_button_, split_button_, chain_button_, reset_button_ })
+  {
+    button->hide();
+  }
+  weld_label_->hide();
+}
+
 void PathEditWidget::connectControls()
 {
   connect(up_button_, &QPushButton::clicked, this, [this](bool) { moveSelected(-1); });

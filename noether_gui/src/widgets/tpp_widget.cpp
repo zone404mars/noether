@@ -124,14 +124,14 @@ const std::size_t kMinPassPoses = 4;
  */
 const std::size_t kSkirtPoses = 1;
 
-/** @brief Couleur des faces planifiees que le disque n'atteint pas le long du chemin livre */
-const unsigned char kUncoveredRgb[3] = { 40, 40, 40 };
-
 /** @brief Rayon d'outil a l'ouverture, en millimetres : le disque de 125 mm de la cellule */
 const double kDefaultToolRadiusMm = 62.5;
 
 /** @brief Pas du trace manuel a l'ouverture, en millimetres */
 const double kDefaultTraceStepMm = 20.0;
+
+/** @brief Hauteur d'approche et de retrait a l'ouverture, en millimetres */
+const double kDefaultApproachHeightMm = 50.0;
 
 /**
  * @brief Couleurs des points du trace manuel : courant, depart, arrivee.
@@ -156,44 +156,6 @@ const double kGrabToleranceM = 0.05;
  * only absorbs the rounding of the recipe file, which keeps twelve significant digits.
  */
 const double kFingerprintTolerance = 1e-9;
-
-/** @brief Donnee du selecteur de direction : la surface suit la configuration du pipeline */
-const int kDirectionFromPipeline = -1;
-
-/** @brief Donnee du selecteur de direction : direction tapee a la main */
-const int kDirectionCustom = 3;
-
-/**
- * @brief Norme en dessous de laquelle une direction de passe ne designe plus rien
- * @details Le generateur normalise la direction qu'on lui donne : un vecteur nul en ferait sortir
- * des NaN, et le chemin produit serait vide ou aberrant sans qu'aucune erreur ne soit levee.
- */
-const double kMinDirectionNorm = 1e-6;
-
-/** @brief Les trois axes du repere du maillage, dans l'ordre du selecteur */
-const Eigen::Vector3d kAxisDirections[3] = { Eigen::Vector3d::UnitX(),
-                                             Eigen::Vector3d::UnitY(),
-                                             Eigen::Vector3d::UnitZ() };
-
-/// @brief Entree du selecteur qui correspond a une direction.
-/// @param direction Direction de la surface, ignoree quand elle n'en porte pas
-/// @param has_own La surface porte une direction a elle
-/// @return L'entree a afficher : celle du pipeline, celle d'un axe, ou celle du choix libre
-int directionEntry(const Eigen::Vector3d& direction, const bool has_own)
-{
-  if (!has_own)
-  {
-    return kDirectionFromPipeline;
-  }
-  for (int axis = 0; axis < 3; ++axis)
-  {
-    if (direction.isApprox(kAxisDirections[axis]))
-    {
-      return axis;
-    }
-  }
-  return kDirectionCustom;
-}
 
 std::pair<Eigen::Vector2d, Eigen::Vector2d> outlineBounds(const std::vector<Eigen::Vector2d>& outline)
 {
@@ -361,6 +323,14 @@ namespace noether
 vtkSmartPointer<vtkActor> replaceActor(vtkRenderer& renderer, vtkSmartPointer<vtkActor> previous, vtkPolyData* poly);
 /// @brief Ajoute un cercle de rayon donne dans le plan (x, y) d'une pose ; defini plus bas
 void appendDiscCircle(const Eigen::Isometry3d& pose, double radius, vtkPoints& points, vtkCellArray& lines);
+/// @brief Acteurs des points de passage, un par pose ; defini plus bas
+vtkSmartPointer<vtkPropAssembly> createToolPathActors(const std::vector<ToolPaths>& tool_paths,
+                                                      vtkAlgorithmOutput* waypoint_shape_output_port);
+/// @brief Acteur des lignes reliant les points de passage ; defini plus bas
+vtkSmartPointer<vtkPropAssembly> createToolPathPolylineActor(const std::vector<ToolPaths>& tool_paths,
+                                                             vtkAlgorithmOutput* waypoint_shape_output_port);
+/// @brief Acteurs des fragments de maillage planifies ; defini plus bas
+vtkSmartPointer<vtkPropAssembly> createMeshActors(const std::vector<pcl::PolygonMesh>& meshes);
 
 TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* parent)
   : QMainWindow(parent)
@@ -447,11 +417,6 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   cell_picker_->SetTolerance(0.0005);
   auto interactor_style = vtkSmartPointer<SelectionInteractorStyle>::New();
   interactor_style->on_click = [this](int x, int y, bool shift, bool double_click) {
-    if (endpoint_pick_ != EndpointPick::None)
-    {
-      onEndpointPicked(pickFace(x, y));
-      return;
-    }
     if (tool_ == SelectionTool::Polygon)
     {
       onOutlineClick(x, y, shift, double_click);
@@ -466,8 +431,7 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   interactor_style->on_key = [this](const std::string& key, bool shift) { onKeyPressed(key, shift); };
   // The polygon tool works by clicks, so it leaves the drag to the camera
   interactor_style->drag_selects = [this]() {
-    return movingPoints() || tool_ == SelectionTool::Brush || tool_ == SelectionTool::Eraser ||
-           tool_ == SelectionTool::Trace;
+    return movingPoints() || tracing() || tool_ == SelectionTool::Brush || tool_ == SelectionTool::Eraser;
   };
   interactor_style->on_drag_start = [this](int x, int y, bool erase) { onDragStart(x, y, erase); };
   interactor_style->on_drag_move = [this](int x, int y, bool erase) { onDragMove(x, y, erase); };
@@ -499,15 +463,11 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   tool_combo_box_->addItem("Brush (drag)", static_cast<int>(SelectionTool::Brush));
   tool_combo_box_->addItem("Polygon (clicks)", static_cast<int>(SelectionTool::Polygon));
   tool_combo_box_->addItem("Eraser (drag)", static_cast<int>(SelectionTool::Eraser));
-  tool_combo_box_->addItem("Trace manuel (drag)", static_cast<int>(SelectionTool::Trace));
   tool_combo_box_->setToolTip(
       "Selection tool. Shift while dragging, or while closing an outline, erases instead of "
       "selecting; Alt while dragging orbits the camera without leaving the brush.\n"
       "Polygon: click to place vertices, then click the first one, press Enter or double-click to "
-      "close. Backspace removes the last vertex, Escape cancels the outline.\n"
-      "Trace manuel : selectionnez une surface dans la liste ; le premier clic est le depart, chaque "
-      "tirage ajoute un segment droit, un point tous les X mm. Retour arriere retire le dernier sommet, "
-      "Echap efface le trace.");
+      "close. Backspace removes the last vertex, Escape cancels the outline.");
   ui_->toolBar->addSeparator();
   ui_->toolBar->addWidget(new QLabel("Tool:", this));
   ui_->toolBar->addWidget(tool_combo_box_);
@@ -548,6 +508,10 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
     {
       move_points_button_->setChecked(false);
     }
+    if (trace_button_ != nullptr)
+    {
+      trace_button_->setChecked(false);
+    }
     // An outline left half traced must not survive a tool change.
     outline_.clear();
     updateOutlineOverlay();
@@ -578,20 +542,17 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   ui_->toolBar->addWidget(tool_radius_enabled_check_box_);
   ui_->toolBar->addWidget(tool_radius_spin_box_);
   connect(tool_radius_spin_box_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {
-    updateCoverage();
     updateDiscCircles();
     updateTraceMarkers();
     render();
   });
   connect(tool_radius_enabled_check_box_, &QCheckBox::toggled, this, [this](bool enabled) {
     tool_radius_spin_box_->setEnabled(enabled);
-    updateCoverage();
     updateDiscCircles();
     updateTraceMarkers();
     render();
   });
 
-  buildTraceControls();
 
   // Surfaces are validated one at a time: Add turns the work selection into a named list entry,
   // and only the list is planned. The dock keeps the entries visible and individually removable.
@@ -607,7 +568,6 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   connect(remove_surface_button_, &QPushButton::clicked, this, &TPPWidget::onRemoveSurface);
 
   connect(surface_list_, &QListWidget::currentRowChanged, this, [this](int) {
-    onSurfaceSelected();
     updateTraceMarkers();
     render();
   });
@@ -615,15 +575,17 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   auto* surfaces_panel = new QWidget(this);
   auto* surfaces_layout = new QVBoxLayout(surfaces_panel);
   surfaces_layout->addWidget(surface_list_);
-  surfaces_layout->addWidget(buildSurfaceDirectionPanel());
-  surfaces_layout->addWidget(buildSurfaceEndpointPanel());
   surfaces_layout->addWidget(remove_surface_button_);
 
   auto* surfaces_dock = new QDockWidget("Surfaces", this);
   surfaces_dock->setWidget(surfaces_panel);
   addDockWidget(Qt::RightDockWidgetArea, surfaces_dock);
 
+  buildTreatmentDock();
   buildPathEditDock();
+  // La configuration du pipeline ne sert qu'a l'approche et au retrait : son dock reste cache,
+  // une configuration se charge par le menu
+  ui_->dock->hide();
 
   // Set visibility of the actors based on the default state of the check boxes
   mesh_actor_->SetVisibility(ui_->action_show_unmodified_mesh->isChecked());
@@ -667,80 +629,6 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
     render();
   });
 }
-
-void TPPWidget::buildPathEditDock()
-{
-  // Retouching bears on the result of the planning, not on the selection, so it lives in its own
-  // dock. Planning feeds it; from then on it owns what the "modified" path actors show.
-  path_edit_ = new PathEditWidget(kMinPassPoses, this);
-  path_edit_->on_changed = [this]() { onPathEdited(); };
-  path_edit_->on_selection_changed = [this]() { updatePathHighlight(); };
-
-  load_edits_button_ = new QPushButton("Charger une retouche...", this);
-  load_edits_button_->setToolTip("Relit une retouche enregistree.\n"
-                                 "Elle est refusee si elle a ete ecrite sur une autre generation.");
-  connect(load_edits_button_, &QPushButton::clicked, this, &TPPWidget::onLoadPathEdits);
-
-  buildCoverageControls();
-
-  auto* panel = new QWidget(this);
-  auto* layout = new QVBoxLayout(panel);
-  layout->addWidget(path_edit_);
-  layout->addWidget(auto_chain_check_box_);
-  layout->addWidget(move_points_button_);
-  layout->addWidget(validate_layout_button_);
-  layout->addWidget(show_discs_check_box_);
-  layout->addWidget(coverage_label_);
-  layout->addWidget(load_edits_button_);
-
-  auto* dock = new QDockWidget("Trajectoire", this);
-  dock->setWidget(panel);
-  addDockWidget(Qt::RightDockWidgetArea, dock);
-}
-
-void TPPWidget::buildCoverageControls()
-{
-  auto_chain_check_box_ = new QCheckBox("Enchainer automatiquement apres generation", this);
-  auto_chain_check_box_->setChecked(false);
-  auto_chain_check_box_->setToolTip("Des la generation, soude toutes les passes en une seule a partir de la "
-                                    "premiere, du plus proche au plus proche. Annuler defait l'enchainement.");
-
-  move_points_button_ = new QPushButton("Deplacer des points (drag)", this);
-  move_points_button_->setCheckable(true);
-  move_points_button_->setToolTip("Enfonce, le tirage dans la vue saisit le point du chemin le plus proche du "
-                                  "clic et le pose ou la souris relache, sur la piece. Annuler defait un tirage. "
-                                  "Les points deplaces sont enregistres avec la retouche.");
-  connect(move_points_button_, &QPushButton::toggled, this, [this](bool checked) {
-    grab_active_ = false;
-    updateGrabMarker();
-    updateTraceMarkers();
-    statusBar()->showMessage(checked ? "Deplacer des points : le tirage dans la vue saisit un point du chemin. "
-                                       "Relachez le bouton, ou choisissez un outil, pour tracer ou selectionner." :
-                                       "Deplacer des points : termine.");
-    render();
-  });
-
-  validate_layout_button_ = new QPushButton("Valider la nouvelle disposition", this);
-  validate_layout_button_->setToolTip("Sort du mode deplacement. Les points deplaces sont ceux du chemin livre : "
-                                      "Save tool paths les ecrit tels quels.");
-  connect(validate_layout_button_, &QPushButton::clicked, this, [this](bool) { validateLayout(); });
-
-  show_discs_check_box_ = new QCheckBox("Cercle du disque autour de chaque point", this);
-  show_discs_check_box_->setChecked(true);
-  show_discs_check_box_->setToolTip("Dessine, apres generation, l'empreinte du disque (rayon d'outil) autour de "
-                                    "chaque point de contact du chemin livre, pour voir un point trop pres d'un bord.");
-  connect(show_discs_check_box_, &QCheckBox::toggled, this, [this](bool) {
-    updateDiscCircles();
-    updateTraceMarkers();
-    render();
-  });
-
-  coverage_label_ = new QLabel(this);
-  coverage_label_->setWordWrap(true);
-  coverage_label_->setToolTip("Part des faces planifiees dont le centroide passe a moins du rayon d'outil "
-                              "d'un troncon du chemin livre. Les faces hors portee sont en noir dans la vue.");
-}
-
 void TPPWidget::render()
 {
   // Call render twice
@@ -995,27 +883,6 @@ std::vector<char> TPPWidget::erodeSelection() const
   }
   return kept;
 }
-
-int TPPWidget::nearestKeptFace(const int surface_id, const Eigen::Vector3d& point, const std::vector<char>& kept) const
-{
-  int nearest = -1;
-  double best = std::numeric_limits<double>::infinity();
-  for (std::size_t f = 0; f < face_region_.size(); ++f)
-  {
-    if (face_region_[f] != surface_id || f >= kept.size() || kept[f] == 0)
-    {
-      continue;
-    }
-    const double distance = (face_centroids_[f] - point).squaredNorm();
-    if (distance < best)
-    {
-      best = distance;
-      nearest = static_cast<int>(f);
-    }
-  }
-  return nearest;
-}
-
 void TPPWidget::updateSelectionColors()
 {
   if (!cell_colors_)
@@ -1043,12 +910,7 @@ void TPPWidget::updateSelectionColors()
     else
     {
       const vtkColor3ub c = color_series->GetColorRepeating(region);
-      if (f < face_uncovered_.size() && face_uncovered_[f])
-      {
-        // Planned, but the disc never reaches it along the delivered path
-        cell_colors_->SetTypedTuple(i, kUncoveredRgb);
-      }
-      else if (f < kept.size() && kept[f])
+      if (f < kept.size() && kept[f])
       {
         // Kept by erosion: full, vivid region color
         const unsigned char rgb[3] = { c.GetRed(), c.GetGreen(), c.GetBlue() };
@@ -1323,7 +1185,7 @@ bool isEnterKey(const std::string& key) { return key == "Return" || key == "KP_E
 
 void TPPWidget::onKeyPressed(const std::string& key, const bool shift)
 {
-  if (tool_ == SelectionTool::Trace)
+  if (tracing())
   {
     onTraceKey(key);
     return;
@@ -1404,27 +1266,9 @@ void TPPWidget::updateToolControls()
   brush_diameter_spin_box_->setEnabled(tool_ == SelectionTool::Brush || tool_ == SelectionTool::Eraser);
   if (trace_step_spin_box_ != nullptr)
   {
-    trace_step_spin_box_->setEnabled(tool_ == SelectionTool::Trace);
+    trace_step_spin_box_->setEnabled(tracing());
   }
 }
-
-void TPPWidget::buildTraceControls()
-{
-  trace_step_spin_box_ = new QDoubleSpinBox(this);
-  trace_step_spin_box_->setRange(0.1, 10000.0);
-  trace_step_spin_box_->setDecimals(1);
-  trace_step_spin_box_->setSingleStep(5.0);
-  trace_step_spin_box_->setValue(kDefaultTraceStepMm);
-  trace_step_spin_box_->setSuffix(" mm");
-  trace_step_spin_box_->setToolTip("Pas du trace manuel : un point du chemin tous les X mm le long de chaque segment.");
-  ui_->toolBar->addWidget(new QLabel("Pas du trace:", this));
-  ui_->toolBar->addWidget(trace_step_spin_box_);
-  connect(trace_step_spin_box_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {
-    updateTraceMarkers();
-    render();
-  });
-}
-
 void TPPWidget::closeOutline(const bool erase)
 {
   const std::vector<int> enclosed = facesInsideOutline();
@@ -1483,337 +1327,6 @@ void TPPWidget::onAddSurface()
   updateSelectionColors();
   render();
 }
-
-QWidget* TPPWidget::buildSurfaceDirectionPanel()
-{
-  // La direction de passe est une propriete DE LA SURFACE, pas du pipeline : une tole se ponce
-  // dans le sens de sa longueur, celle d'a cote en travers. Le pipeline n'en porte plus qu'un
-  // defaut, et chaque surface peut s'en ecarter.
-  populateDirectionSelector();
-
-  auto* panel = new QWidget(this);
-  auto* layout = new QVBoxLayout(panel);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->addWidget(surface_direction_combo_box_);
-
-  layout->addLayout(buildDirectionComponents());
-
-  connect(surface_direction_combo_box_,
-          QOverload<int>::of(&QComboBox::currentIndexChanged),
-          this,
-          [this](int) { onSurfaceDirectionEdited(); });
-
-  return panel;
-}
-
-void TPPWidget::populateDirectionSelector()
-{
-  surface_direction_combo_box_ = new QComboBox(this);
-  surface_direction_combo_box_->addItem("Direction : celle du pipeline", kDirectionFromPipeline);
-  surface_direction_combo_box_->addItem("Direction : X de la piece", 0);
-  surface_direction_combo_box_->addItem("Direction : Y de la piece", 1);
-  surface_direction_combo_box_->addItem("Direction : Z de la piece", 2);
-  surface_direction_combo_box_->addItem("Direction : au choix", kDirectionCustom);
-  surface_direction_combo_box_->setToolTip("Sens des lignes de balayage sur la surface selectionnee,\n"
-                                           "exprime dans le repere du maillage, celui des axes affiches.");
-}
-
-QLayout* TPPWidget::buildDirectionComponents()
-{
-  auto* components = new QHBoxLayout();
-  QDoubleSpinBox** boxes[3] = { &direction_x_spin_box_, &direction_y_spin_box_, &direction_z_spin_box_ };
-  const char* labels[3] = { "x", "y", "z" };
-  for (int i = 0; i < 3; ++i)
-  {
-    *boxes[i] = new QDoubleSpinBox(this);
-    (*boxes[i])->setRange(-1.0, 1.0);
-    (*boxes[i])->setDecimals(3);
-    (*boxes[i])->setSingleStep(0.1);
-    components->addWidget(new QLabel(labels[i], this));
-    components->addWidget(*boxes[i]);
-    connect(*boxes[i],
-            QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this,
-            [this](double) { onSurfaceDirectionEdited(); });
-  }
-  return components;
-}
-
-void TPPWidget::showDirection(const Eigen::Vector3d& direction, const int entry)
-{
-  // Les controles refletent la surface choisie : les regler ne doit rien reecrire dans la
-  // surface precedente, d'ou le blocage des signaux le temps de la mise a jour.
-  const bool blocked = surface_direction_combo_box_->blockSignals(true);
-  surface_direction_combo_box_->setCurrentIndex(surface_direction_combo_box_->findData(entry));
-  surface_direction_combo_box_->blockSignals(blocked);
-
-  QDoubleSpinBox* boxes[3] = { direction_x_spin_box_, direction_y_spin_box_, direction_z_spin_box_ };
-  for (int i = 0; i < 3; ++i)
-  {
-    boxes[i]->blockSignals(true);
-    boxes[i]->setValue(direction[i]);
-    boxes[i]->blockSignals(false);
-    boxes[i]->setEnabled(entry == kDirectionCustom);
-  }
-}
-
-void TPPWidget::onSurfaceSelected()
-{
-  QListWidgetItem* item = surface_list_->currentItem();
-  if (item == nullptr)
-  {
-    return;
-  }
-
-  Eigen::Vector3d direction = Eigen::Vector3d::UnitX();
-  const bool has_own = surfaceDirection(item->data(Qt::UserRole).toInt(), direction);
-  showDirection(direction, directionEntry(direction, has_own));
-}
-
-void TPPWidget::storeSurfaceDirection(const int surface_id, const int entry)
-{
-  if (entry == kDirectionFromPipeline)
-  {
-    surface_directions_.erase(surface_id);
-  }
-  else if (entry == kDirectionCustom)
-  {
-    surface_directions_[surface_id] =
-        Eigen::Vector3d(direction_x_spin_box_->value(), direction_y_spin_box_->value(), direction_z_spin_box_->value());
-  }
-  else
-  {
-    surface_directions_[surface_id] = kAxisDirections[entry];
-  }
-}
-
-QWidget* TPPWidget::buildSurfaceEndpointPanel()
-{
-  // Le depart et l'arrivee sont des proprietes DE LA SURFACE, comme sa direction : la ou l'outil
-  // pose et la ou il quitte, pour que la surface suivante s'enchaine sans decoller
-  pick_start_button_ = new QPushButton("Choisir le depart (clic)", this);
-  pick_end_button_ = new QPushButton("Choisir l'arrivee (clic)", this);
-  clear_endpoints_button_ = new QPushButton("Effacer depart et arrivee", this);
-  pick_start_button_->setToolTip("Le prochain clic sur le maillage fixe le point ou le chemin de la surface "
-                                 "selectionnee commence. Il faut aussi une arrivee pour que cela s'applique.");
-  pick_end_button_->setToolTip("Le prochain clic sur le maillage fixe le point ou le chemin finit. L'arrivee "
-                               "n'est pas toujours atteignable exactement : l'ecart est affiche apres generation.");
-  connectEndpointButtons();
-
-  auto* panel = new QWidget(this);
-  auto* layout = new QHBoxLayout(panel);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->addWidget(pick_start_button_);
-  layout->addWidget(pick_end_button_);
-  layout->addWidget(clear_endpoints_button_);
-  return panel;
-}
-
-void TPPWidget::connectEndpointButtons()
-{
-  connect(pick_start_button_, &QPushButton::clicked, this, [this](bool) {
-    endpoint_pick_ = EndpointPick::Start;
-    statusBar()->showMessage("Cliquez la face ou le chemin de la surface selectionnee commence.");
-  });
-  connect(pick_end_button_, &QPushButton::clicked, this, [this](bool) {
-    endpoint_pick_ = EndpointPick::End;
-    statusBar()->showMessage("Cliquez la face ou le chemin de la surface selectionnee finit.");
-  });
-  connect(clear_endpoints_button_, &QPushButton::clicked, this, [this](bool) { clearSelectedSurfaceEndpoints(); });
-}
-
-void TPPWidget::clearSelectedSurfaceEndpoints()
-{
-  QListWidgetItem* item = surface_list_->currentItem();
-  if (item == nullptr)
-  {
-    return;
-  }
-  const int surface_id = item->data(Qt::UserRole).toInt();
-  surface_starts_.erase(surface_id);
-  surface_ends_.erase(surface_id);
-  relabelSurface(item);
-  updateEndpointMarkers();
-  render();
-}
-
-/// @brief Phrase du bandeau d'etat apres un depart ou une arrivee fixe.
-/// @param is_start Vrai pour le depart, faux pour l'arrivee
-/// @param shift_mm Distance entre la face cliquee et la face retenue, en millimetres
-static QString endpointMessage(const bool is_start, const double shift_mm)
-{
-  QString message = is_start ? "Depart fixe." : "Arrivee fixee.";
-  if (shift_mm > 0.5)
-  {
-    message += QString(" Deplace de %1 mm : le disque deborderait de la surface a l'endroit clique.")
-                   .arg(shift_mm, 0, 'f', 0);
-  }
-  return message;
-}
-
-void TPPWidget::onEndpointPicked(const int face)
-{
-  const EndpointPick target = endpoint_pick_;
-  endpoint_pick_ = EndpointPick::None;
-  QListWidgetItem* item = surface_list_->currentItem();
-  if (face < 0 || item == nullptr || static_cast<std::size_t>(face) >= face_centroids_.size())
-  {
-    statusBar()->showMessage("Aucune face sous le clic, ou aucune surface selectionnee : rien n'est fixe.");
-    return;
-  }
-  // Le disque doit tenir sur la surface au point demande : la face cliquee est remplacee par la
-  // face planifiable (non erodee) la plus proche, et l'operateur lit de combien il a ete deplace
-  const int surface_id = item->data(Qt::UserRole).toInt();
-  const Eigen::Vector3d clicked = face_centroids_[static_cast<std::size_t>(face)];
-  const int reachable = nearestKeptFace(surface_id, clicked, erodeSelection());
-  if (reachable < 0)
-  {
-    statusBar()->showMessage("Le disque ne tient sur aucune face de cette surface : rien n'est fixe.");
-    return;
-  }
-  std::map<int, Eigen::Vector3d>& store = (target == EndpointPick::Start) ? surface_starts_ : surface_ends_;
-  store[surface_id] = face_centroids_[static_cast<std::size_t>(reachable)];
-  const double shift_mm = (store[surface_id] - clicked).norm() * 1000.0;
-  statusBar()->showMessage(endpointMessage(target == EndpointPick::Start, shift_mm));
-  relabelSurface(item);
-  updateEndpointMarkers();
-  render();
-}
-
-bool TPPWidget::surfaceEndpoints(const int surface_id, Eigen::Vector3d& start, Eigen::Vector3d& end) const
-{
-  const auto found_start = surface_starts_.find(surface_id);
-  const auto found_end = surface_ends_.find(surface_id);
-  if (found_start == surface_starts_.end() || found_end == surface_ends_.end())
-  {
-    return false;
-  }
-  start = found_start->second;
-  end = found_end->second;
-  return true;
-}
-
-vtkSmartPointer<vtkPolyData> TPPWidget::endpointMarkerPoints() const
-{
-  // Un point par extremite fixee : vert au depart, rouge a l'arrivee
-  auto points = vtkSmartPointer<vtkPoints>::New();
-  auto vertices = vtkSmartPointer<vtkCellArray>::New();
-  auto colors = vtkSmartPointer<vtkUnsignedCharArray>::New();
-  colors->SetNumberOfComponents(3);
-  const unsigned char green[3] = { 40, 200, 60 };
-  const unsigned char red[3] = { 220, 40, 40 };
-  for (const std::map<int, Eigen::Vector3d>* store : { &surface_starts_, &surface_ends_ })
-  {
-    for (const auto& entry : *store)
-    {
-      const vtkIdType id = points->InsertNextPoint(entry.second.x(), entry.second.y(), entry.second.z());
-      vertices->InsertNextCell(1, &id);
-      colors->InsertNextTypedTuple(store == &surface_starts_ ? green : red);
-    }
-  }
-  auto poly = vtkSmartPointer<vtkPolyData>::New();
-  poly->SetPoints(points);
-  poly->SetVerts(vertices);
-  poly->GetPointData()->SetScalars(colors);
-  return poly;
-}
-
-void TPPWidget::updateEndpointMarkers()
-{
-  // Rendus comme des spheres, pour se voir a toute distance de camera
-  renderer_->RemoveActor(endpoint_actor_);
-  auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-  mapper->SetInputData(endpointMarkerPoints());
-  endpoint_actor_ = vtkSmartPointer<vtkActor>::New();
-  endpoint_actor_->SetMapper(mapper);
-  endpoint_actor_->GetProperty()->SetPointSize(18.0f);
-  endpoint_actor_->GetProperty()->SetRenderPointsAsSpheres(true);
-  renderer_->AddActor(endpoint_actor_);
-}
-
-QString TPPWidget::describeEndpointGaps(const int surface_id, const ToolPaths& delivered) const
-{
-  Eigen::Vector3d start;
-  Eigen::Vector3d end;
-  if (!surfaceEndpoints(surface_id, start, end) || delivered.empty() || delivered.front().empty())
-  {
-    return QString();
-  }
-  // La premiere et la derniere poses sont l'approche et le retrait, hors contact : on lit celles d'a cote
-  const ToolPathSegment& first = delivered.front().front();
-  const ToolPathSegment& last = delivered.back().back();
-  if (first.size() <= kSkirtPoses || last.size() <= kSkirtPoses)
-  {
-    return QString();
-  }
-  const double start_gap = (first[kSkirtPoses].translation() - start).norm();
-  const double end_gap = (last[last.size() - 1 - kSkirtPoses].translation() - end).norm();
-  return QString("Surface %1 : depart a %2 mm du point demande, arrivee a %3 mm.  ")
-      .arg(surface_id + 1)
-      .arg(start_gap * 1000.0, 0, 'f', 0)
-      .arg(end_gap * 1000.0, 0, 'f', 0);
-}
-
-void TPPWidget::onSurfaceDirectionEdited()
-{
-  QListWidgetItem* item = surface_list_->currentItem();
-  if (item == nullptr)
-  {
-    return;
-  }
-
-  const int surface_id = item->data(Qt::UserRole).toInt();
-  const int entry = surface_direction_combo_box_->currentData().toInt();
-  storeSurfaceDirection(surface_id, entry);
-
-  // Les controles suivent ce qui vient d'etre enregistre : choisir un axe remplit les
-  // composantes et les grise, revenir au pipeline les grise aussi.
-  Eigen::Vector3d stored = Eigen::Vector3d::UnitX();
-  showDirection(surfaceDirection(surface_id, stored) ? stored : Eigen::Vector3d::UnitX(), entry);
-  relabelSurface(item);
-}
-
-bool TPPWidget::surfaceDirection(const int surface_id, Eigen::Vector3d& direction) const
-{
-  const std::map<int, Eigen::Vector3d>::const_iterator found = surface_directions_.find(surface_id);
-  if (found == surface_directions_.end())
-  {
-    return false;
-  }
-  direction = found->second;
-  return true;
-}
-
-void TPPWidget::relabelSurface(QListWidgetItem* item) const
-{
-  const int surface_id = item->data(Qt::UserRole).toInt();
-  const int face_count = item->data(Qt::UserRole + 1).toInt();
-
-  Eigen::Vector3d direction;
-  QString reading = "pipeline";
-  if (surfaceDirection(surface_id, direction))
-  {
-    reading = "au choix";
-    const char* names[3] = { "X", "Y", "Z" };
-    for (int axis = 0; axis < 3; ++axis)
-    {
-      if (direction.isApprox(kAxisDirections[axis]))
-      {
-        reading = names[axis];
-      }
-    }
-  }
-  Eigen::Vector3d start;
-  Eigen::Vector3d end;
-  const QString endpoints = surfaceEndpoints(surface_id, start, end) ? " - depart et arrivee fixes" : "";
-  item->setText(QString("surface %1 - %2 faces - direction %3%4%5")
-                    .arg(surface_id + 1)
-                    .arg(face_count)
-                    .arg(reading)
-                    .arg(endpoints)
-                    .arg(describeTrace(surface_id)));
-}
-
 QString TPPWidget::describeTrace(const int surface_id) const
 {
   const auto found = surface_traces_.find(surface_id);
@@ -1823,6 +1336,12 @@ QString TPPWidget::describeTrace(const int surface_id) const
   }
   return QString(" - trace manuel (%1 sommets)").arg(found->second.size());
 }
+void TPPWidget::relabelSurface(QListWidgetItem* item) const
+{
+  const int surface_id = item->data(Qt::UserRole).toInt();
+  const int face_count = item->data(Qt::UserRole + 1).toInt();
+  item->setText(QString("surface %1 - %2 faces%3").arg(surface_id + 1).arg(face_count).arg(describeTrace(surface_id)));
+}
 
 void TPPWidget::onRemoveSurface()
 {
@@ -1831,7 +1350,6 @@ void TPPWidget::onRemoveSurface()
   {
     return;
   }
-
   const int surface_id = item->data(Qt::UserRole).toInt();
   for (int& r : face_region_)
   {
@@ -1840,17 +1358,269 @@ void TPPWidget::onRemoveSurface()
       r = -1;
     }
   }
-  surface_directions_.erase(surface_id);
-  surface_starts_.erase(surface_id);
-  surface_ends_.erase(surface_id);
   surface_traces_.erase(surface_id);
   trace_preview_active_ = false;
-  updateEndpointMarkers();
   delete surface_list_->takeItem(surface_list_->row(item));
-
   updateTraceMarkers();
   updateSelectionColors();
   render();
+}
+
+void TPPWidget::clearSelection()
+{
+  // An outline being traced is part of the selection gesture: clearing one clears the other.
+  outline_.clear();
+  updateOutlineOverlay();
+  std::fill(face_region_.begin(), face_region_.end(), -1);
+  std::fill(pending_faces_.begin(), pending_faces_.end(), 0);
+  if (surface_list_ != nullptr)
+  {
+    surface_list_->clear();
+  }
+  surface_traces_.clear();
+  trace_preview_active_ = false;
+  updateTraceMarkers();
+  next_region_id_ = 0;
+  updateSelectionColors();
+  render();
+}
+
+bool TPPWidget::tracing() const { return trace_button_ != nullptr && trace_button_->isChecked(); }
+
+void TPPWidget::buildTreatmentDock()
+{
+  // Le traitement, c'est le trace a la main : un bouton a bascule qui prend le tirage de la vue,
+  // le pas des points, et de quoi corriger le trace sans le clavier
+  trace_button_ = new QPushButton("Trace manuel (drag)", this);
+  trace_button_->setCheckable(true);
+  trace_button_->setToolTip("Enfonce : selectionnez une surface dans la liste, cliquez dessus pour le depart, "
+                            "puis tirez : chaque tirage ajoute un segment droit, un point tous les X mm, avec "
+                            "le cercle du disque autour de chaque point.");
+  connect(trace_button_, &QPushButton::toggled, this, [this](bool checked) { onTraceToggled(checked); });
+
+  trace_step_spin_box_ = new QDoubleSpinBox(this);
+  trace_step_spin_box_->setRange(0.1, 10000.0);
+  trace_step_spin_box_->setDecimals(1);
+  trace_step_spin_box_->setSingleStep(5.0);
+  trace_step_spin_box_->setValue(kDefaultTraceStepMm);
+  trace_step_spin_box_->setSuffix(" mm");
+  trace_step_spin_box_->setToolTip("Pas du trace : un point du chemin tous les X mm le long de chaque segment.");
+  connect(trace_step_spin_box_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {
+    updateTraceMarkers();
+    render();
+  });
+
+  approach_height_spin_box_ = new QDoubleSpinBox(this);
+  approach_height_spin_box_->setRange(1.0, 1000.0);
+  approach_height_spin_box_->setDecimals(0);
+  approach_height_spin_box_->setSingleStep(10.0);
+  approach_height_spin_box_->setValue(kDefaultApproachHeightMm);
+  approach_height_spin_box_->setSuffix(" mm");
+  approach_height_spin_box_->setToolTip("Hauteur du point d'approche au-dessus du premier point du trace, et du "
+                                        "point de retrait au-dessus du dernier, le long de l'axe outil. "
+                                        "Appliquee a la generation.");
+
+  auto* dock = new QDockWidget("Traitement", this);
+  dock->setWidget(buildTreatmentPanel());
+  addDockWidget(Qt::RightDockWidgetArea, dock);
+}
+
+QWidget* TPPWidget::buildTreatmentPanel()
+{
+  auto* undo_vertex_button = new QPushButton("Retirer le dernier sommet", this);
+  connect(undo_vertex_button, &QPushButton::clicked, this, [this](bool) { onTraceKey("BackSpace"); });
+  auto* clear_trace_button = new QPushButton("Effacer le trace", this);
+  connect(clear_trace_button, &QPushButton::clicked, this, [this](bool) { onTraceKey("Escape"); });
+
+  auto* step_row = new QWidget(this);
+  auto* step_layout = new QHBoxLayout(step_row);
+  step_layout->setContentsMargins(0, 0, 0, 0);
+  step_layout->addWidget(new QLabel("Pas du trace :", this));
+  step_layout->addWidget(trace_step_spin_box_);
+  auto* height_row = new QWidget(this);
+  auto* height_layout = new QHBoxLayout(height_row);
+  height_layout->setContentsMargins(0, 0, 0, 0);
+  height_layout->addWidget(new QLabel("Hauteur d'approche :", this));
+  height_layout->addWidget(approach_height_spin_box_);
+
+  auto* panel = new QWidget(this);
+  auto* layout = new QVBoxLayout(panel);
+  layout->addWidget(trace_button_);
+  layout->addWidget(step_row);
+  layout->addWidget(height_row);
+  layout->addWidget(undo_vertex_button);
+  layout->addWidget(clear_trace_button);
+  return panel;
+}
+
+void TPPWidget::onTraceToggled(const bool checked)
+{
+  // Le trace et le deplacement de points se partagent le tirage : un seul a la fois
+  if (checked && move_points_button_ != nullptr)
+  {
+    move_points_button_->setChecked(false);
+  }
+  trace_preview_active_ = false;
+  updateToolControls();
+  updateTraceMarkers();
+  statusBar()->showMessage(checked ? "Trace manuel : selectionnez une surface dans la liste, cliquez dessus pour "
+                                     "le depart, puis tirez." :
+                                     "Trace manuel : termine.");
+  render();
+}
+
+void TPPWidget::buildPathEditDock()
+{
+  // La retouche porte sur le resultat de la generation : ordre des passes, suppression, points
+  // deplaces. Les autres retouches (sens, soudure, enchainement) n'ont pas cours en tout-manuel.
+  path_edit_ = new PathEditWidget(kMinPassPoses, this);
+  path_edit_->hideAdvancedControls();
+  path_edit_->on_changed = [this]() { onPathEdited(); };
+  path_edit_->on_selection_changed = [this]() { updatePathHighlight(); };
+
+  move_points_button_ = new QPushButton("Deplacer des points (drag)", this);
+  move_points_button_->setCheckable(true);
+  move_points_button_->setToolTip("Enfonce, le tirage dans la vue saisit le point du chemin le plus proche du "
+                                  "clic et le pose ou la souris relache, sur la piece. Annuler defait un tirage.");
+  connect(move_points_button_, &QPushButton::toggled, this, [this](bool checked) { onMovePointsToggled(checked); });
+  validate_layout_button_ = new QPushButton("Valider la nouvelle disposition", this);
+  validate_layout_button_->setToolTip("Sort du mode deplacement. Les points deplaces sont ceux du chemin livre : "
+                                      "Save tool paths les ecrit tels quels.");
+  connect(validate_layout_button_, &QPushButton::clicked, this, [this](bool) { validateLayout(); });
+
+  load_tool_paths_button_ = new QPushButton("Charger un chemin...", this);
+  load_tool_paths_button_->setToolTip("Relit un chemin enregistre (tool_path_plan.yaml) pour le retoucher : ordre, "
+                                      "suppression, deplacement de points. Save tool paths reecrit le resultat.");
+  connect(load_tool_paths_button_, &QPushButton::clicked, this, [this](bool) { onLoadToolPaths(); });
+
+  auto* panel = new QWidget(this);
+  auto* layout = new QVBoxLayout(panel);
+  layout->addWidget(load_tool_paths_button_);
+  layout->addWidget(path_edit_);
+  layout->addWidget(move_points_button_);
+  layout->addWidget(validate_layout_button_);
+  auto* dock = new QDockWidget("Trajectoire", this);
+  dock->setWidget(panel);
+  addDockWidget(Qt::RightDockWidgetArea, dock);
+}
+
+void TPPWidget::onMovePointsToggled(const bool checked)
+{
+  grab_active_ = false;
+  if (checked && trace_button_ != nullptr)
+  {
+    trace_button_->setChecked(false);
+  }
+  updateGrabMarker();
+  updateTraceMarkers();
+  statusBar()->showMessage(checked ? "Deplacer des points : le tirage dans la vue saisit un point du chemin." :
+                                     "Deplacer des points : termine.");
+  render();
+}
+
+void TPPWidget::plan()
+{
+  try
+  {
+    if (!confirmDiscardPathEdits())
+    {
+      return;
+    }
+    if (std::any_of(pending_faces_.begin(), pending_faces_.end(), [](char p) { return p != 0; }))
+    {
+      QMessageBox::warning(this,
+                           "Selection non ajoutee",
+                           "La selection orange n'appartient a aucune surface. Ajoutez-la a la liste, ou "
+                           "effacez-la, puis generez.");
+      return;
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    tool_paths_.clear();
+    fragments_.clear();
+    std::vector<ToolPaths> unmodified_tool_paths;
+    const std::vector<int> untraced = planTracedSurfaces(unmodified_tool_paths);
+    QApplication::restoreOverrideCursor();
+    showPlannedPaths(unmodified_tool_paths);
+    reportUntracedSurfaces(untraced);
+  }
+  catch (const std::exception& ex)
+  {
+    QApplication::restoreOverrideCursor();
+    // Les surfaces deja planifiees sont dans tool_paths_, celles d'apres non : garder ce
+    // resultat partiel laisserait afficher, et enregistrer, un chemin ampute en silence
+    clearPlannedPaths();
+    std::stringstream ss;
+    printException(ex, ss);
+    QMessageBox::warning(this, "Erreur de generation", QString::fromStdString(ss.str()));
+  }
+}
+
+std::vector<int> TPPWidget::planTracedSurfaces(std::vector<ToolPaths>& unmodified)
+{
+  // Les faces de chaque surface, dans l'ordre des surfaces ; une surface sans trace n'a rien a
+  // generer et est rapportee
+  std::map<int, std::vector<int>> region_faces;
+  for (std::size_t f = 0; f < face_region_.size(); ++f)
+  {
+    if (face_region_[f] >= 0)
+    {
+      region_faces[face_region_[f]].push_back(static_cast<int>(f));
+    }
+  }
+  std::vector<int> untraced;
+  for (const auto& entry : region_faces)
+  {
+    if (surfaceHasTrace(entry.first))
+    {
+      planTracedSurface(entry.first, entry.second, unmodified);
+    }
+    else
+    {
+      untraced.push_back(entry.first);
+    }
+  }
+  return untraced;
+}
+
+void TPPWidget::showPlannedPaths(const std::vector<ToolPaths>& unmodified)
+{
+  renderer_->RemoveActor(mesh_fragment_actor_);
+  mesh_fragment_actor_ = createMeshActors(fragments_);
+  renderer_->AddActor(mesh_fragment_actor_);
+  mesh_fragment_actor_->SetVisibility(ui_->action_show_modified_mesh->isChecked());
+
+  renderer_->RemoveActor(unmodified_tool_path_actor_);
+  unmodified_tool_path_actor_ = createToolPathActors(unmodified, tube_filter_->GetOutputPort());
+  renderer_->AddActor(unmodified_tool_path_actor_);
+  unmodified_tool_path_actor_->SetVisibility(ui_->action_show_unmodified_tool_path->isChecked());
+
+  renderer_->RemoveActor(unmodified_connected_path_actor_);
+  unmodified_connected_path_actor_ = createToolPathPolylineActor(unmodified, tube_filter_->GetOutputPort());
+  renderer_->AddActor(unmodified_connected_path_actor_);
+  unmodified_connected_path_actor_->SetVisibility(ui_->action_show_unmodified_tool_path_lines->isChecked());
+
+  // Le dock Trajectoire recoit les passes ; c'est lui qui dessine le chemin livre a partir d'ici
+  path_edit_->setGenerated(flattenToolPaths(tool_paths_));
+  render();
+}
+
+void TPPWidget::reportUntracedSurfaces(const std::vector<int>& untraced)
+{
+  if (untraced.empty())
+  {
+    statusBar()->showMessage(QString("%1 surface(s) generee(s) depuis leur trace.").arg(tool_paths_.size()));
+    return;
+  }
+  QStringList names;
+  for (const int surface_id : untraced)
+  {
+    names << QString::number(surface_id + 1);
+  }
+  QMessageBox::information(this,
+                           "Surfaces sans trace",
+                           QString("Les surfaces %1 n'ont pas de trace manuel : rien n'est genere pour elles. "
+                                   "Onglet Traitement, Trace manuel, puis tracez dessus.")
+                               .arg(names.join(", ")));
 }
 
 void TPPWidget::onDragStart(const int x, const int y, const bool erase)
@@ -1862,6 +1632,11 @@ void TPPWidget::onDragStart(const int x, const int y, const bool erase)
     onPointDragStart(x, y);
     return;
   }
+  if (tracing())
+  {
+    onTraceDragStart(x, y);
+    return;
+  }
 
   switch (tool_)
   {
@@ -1870,9 +1645,6 @@ void TPPWidget::onDragStart(const int x, const int y, const bool erase)
       paintBrushDab(x, y, erase);
       updateSelectionColors();
       render();
-      break;
-    case SelectionTool::Trace:
-      onTraceDragStart(x, y);
       break;
     case SelectionTool::Region:
     case SelectionTool::Polygon:
@@ -1887,6 +1659,11 @@ void TPPWidget::onDragMove(const int x, const int y, const bool erase)
     onPointDragMove(x, y);
     return;
   }
+  if (tracing())
+  {
+    onTraceDragMove(x, y);
+    return;
+  }
   switch (tool_)
   {
     case SelectionTool::Brush:
@@ -1894,9 +1671,6 @@ void TPPWidget::onDragMove(const int x, const int y, const bool erase)
       paintBrushAlongSegment(x, y, erase);
       updateSelectionColors();
       render();
-      break;
-    case SelectionTool::Trace:
-      onTraceDragMove(x, y);
       break;
     case SelectionTool::Region:
     case SelectionTool::Polygon:
@@ -1912,7 +1686,7 @@ void TPPWidget::onDragEnd(const bool /*erase*/)
   {
     onPointDragEnd();
   }
-  else if (tool_ == SelectionTool::Trace)
+  else if (tracing())
   {
     onTraceDragEnd();
   }
@@ -1931,13 +1705,14 @@ void TPPWidget::onPointDragStart(const int x, const int y)
   }
   // La pose est cherchee dans la generation deplacee : c'est elle que la recette assemble, et
   // ses indices ne bougent pas quand les passes sont reordonnees
-  if (!locatePose(path_edit_->movedGenerated(), clicked, kGrabToleranceM, grabbed_))
+  if (!locateContactPose(clicked, grabbed_))
   {
-    statusBar()->showMessage("Aucun point du chemin a moins de 50 mm du clic.");
+    statusBar()->showMessage("Aucun point de contact du chemin a moins de 50 mm du clic.");
     return;
   }
   grab_active_ = true;
   grab_origin_ = grabbed_.pose.translation();
+  grab_segment_before_ = path_edit_->movedGenerated()[grabbed_.segment];
   path_edit_->beginPoseMoves();
   // Le cercle cyan de la pose saisie s'efface : c'est le cercle rose qui la suit
   updateDiscCircles();
@@ -1983,8 +1758,9 @@ void TPPWidget::onPointDragEnd()
     return;
   }
   grab_active_ = false;
-  // Un seul recalcul du chemin, de la couverture et des cercles, au relachement
+  // Un seul recalcul du chemin et des cercles, au relachement ; l'approche ou le retrait suit
   path_edit_->movePose(grabbed_);
+  moveSkirtPoses();
   updateGrabMarker();
   statusBar()->showMessage(QString("Point pose. %1 point(s) deplace(s) a la main ; Annuler les defait un tirage a la fois.")
                                .arg(path_edit_->moves().size()));
@@ -2001,6 +1777,60 @@ void TPPWidget::validateLayout()
                                    "dans le chemin, et la retouche a cote.")
                                .arg(moved));
   render();
+}
+
+bool TPPWidget::locateContactPose(const Eigen::Vector3d& clicked, PoseMove& found) const
+{
+  // Les poses d'approche et de retrait sont hors contact : on ne les propose pas a la saisie
+  std::vector<ToolPathSegment> contact_only = path_edit_->movedGenerated();
+  for (ToolPathSegment& pass : contact_only)
+  {
+    if (pass.size() > 2 * kSkirtPoses)
+    {
+      pass.erase(pass.end() - static_cast<std::ptrdiff_t>(kSkirtPoses), pass.end());
+      pass.erase(pass.begin(), pass.begin() + static_cast<std::ptrdiff_t>(kSkirtPoses));
+    }
+  }
+  if (!locatePose(contact_only, clicked, kGrabToleranceM, found))
+  {
+    return false;
+  }
+  // Retour aux indices de la passe complete, approche comprise
+  if (contact_only[found.segment].size() + 2 * kSkirtPoses == path_edit_->movedGenerated()[found.segment].size())
+  {
+    found.index += kSkirtPoses;
+  }
+  return true;
+}
+
+void TPPWidget::moveSkirtPoses()
+{
+  const ToolPathSegment& before = grab_segment_before_;
+  if (before.size() <= 2 * kSkirtPoses || grabbed_.index >= before.size())
+  {
+    return;
+  }
+  const Eigen::Isometry3d origin_pose = before[grabbed_.index];
+  // Approche devant la premiere pose de contact, retrait derriere la derniere
+  std::vector<std::size_t> skirts;
+  if (grabbed_.index == kSkirtPoses)
+  {
+    skirts.push_back(0);
+  }
+  if (grabbed_.index + kSkirtPoses + 1 == before.size())
+  {
+    skirts.push_back(before.size() - 1);
+  }
+  for (const std::size_t skirt : skirts)
+  {
+    // La place de l'approche dans le repere de la pose de contact ne change pas : elle reste a la
+    // meme hauteur, le long du nouvel axe outil
+    PoseMove follower;
+    follower.segment = grabbed_.segment;
+    follower.index = skirt;
+    follower.pose = grabbed_.pose * (origin_pose.inverse() * before[skirt]);
+    path_edit_->movePose(follower);
+  }
 }
 
 void TPPWidget::updateGrabMarker()
@@ -2167,7 +1997,7 @@ std::vector<Eigen::Vector3d> TPPWidget::projectedTraceSamples(const int surface_
   std::vector<Eigen::Vector3d> samples;
   // Le trace ne se montre que pendant qu'on le trace : apres generation, ses points et ses
   // cercles se confondraient avec ceux du chemin, et ne suivraient pas un point deplace
-  if (surface_id < 0 || trace_step_spin_box_ == nullptr || tool_ != SelectionTool::Trace || movingPoints())
+  if (surface_id < 0 || trace_step_spin_box_ == nullptr || !tracing() || movingPoints())
   {
     return samples;
   }
@@ -2254,7 +2084,7 @@ vtkSmartPointer<vtkPolyData> TPPWidget::flatDiscCircles(const std::vector<Eigen:
   auto vtk_points = vtkSmartPointer<vtkPoints>::New();
   auto lines = vtkSmartPointer<vtkCellArray>::New();
   const bool radius_enabled = tool_radius_enabled_check_box_->isChecked() && tool_radius_spin_box_->value() > 0.0;
-  if (radius_enabled && show_discs_check_box_->isChecked())
+  if (radius_enabled)
   {
     const double radius_m = tool_radius_spin_box_->value() / 1000.0;
     for (std::size_t k = 0; k < points.size(); ++k)
@@ -2291,7 +2121,7 @@ void TPPWidget::updateDiscCircles()
   renderer_->RemoveActor(disc_actor_);
   disc_actor_ = nullptr;
   const bool radius_enabled = tool_radius_enabled_check_box_->isChecked() && tool_radius_spin_box_->value() > 0.0;
-  if (path_edit_ == nullptr || !radius_enabled || !show_discs_check_box_->isChecked())
+  if (path_edit_ == nullptr || !radius_enabled)
   {
     return;
   }
@@ -2367,31 +2197,6 @@ ToolPaths TPPWidget::tracedToolPaths(const int surface_id) const
   projectOnSurface(surface_id, points, normals);
   return { ToolPath{ tracePoses(points, normals) } };
 }
-
-void TPPWidget::clearSelection()
-{
-  // An outline being traced is part of the selection gesture: clearing one clears the other.
-  outline_.clear();
-  updateOutlineOverlay();
-
-  std::fill(face_region_.begin(), face_region_.end(), -1);
-  std::fill(pending_faces_.begin(), pending_faces_.end(), 0);
-  if (surface_list_ != nullptr)
-  {
-    surface_list_->clear();
-  }
-  surface_directions_.clear();
-  surface_starts_.clear();
-  surface_ends_.clear();
-  surface_traces_.clear();
-  trace_preview_active_ = false;
-  updateEndpointMarkers();
-  updateTraceMarkers();
-  next_region_id_ = 0;
-  updateSelectionColors();
-  render();
-}
-
 void TPPWidget::onClearSelection(const bool /*checked*/) { clearSelection(); }
 
 void TPPWidget::onLoadMesh(const bool /*checked*/)
@@ -2629,301 +2434,23 @@ void TPPWidget::planTracedSurface(const int surface_id,
                                   const std::vector<int>& faces,
                                   std::vector<ToolPaths>& unmodified)
 {
-  const ToolPathModifier::ConstPtr modifier = pipeline_widget_->createToolPathModifierWithoutOrganization();
   const ToolPaths path = tracedToolPaths(surface_id);
   fragments_.push_back(extractSubMeshFromFaces(mesh_, faces));
   unmodified.push_back(path);
-  try
+  // Le chemin livre : le trace, une approche devant, un retrait derriere, rien d'autre
+  const double height_m = approach_height_spin_box_->value() / 1000.0;
+  ToolPaths delivered;
+  for (const ToolPath& tool_path : path)
   {
-    tool_paths_.push_back(modifier->modify(path));
+    ToolPath with_skirts;
+    for (const ToolPathSegment& segment : tool_path)
+    {
+      with_skirts.push_back(withApproachAndRetract(segment, height_m));
+    }
+    delivered.push_back(with_skirts);
   }
-  catch (const std::exception&)
-  {
-    std::stringstream ss;
-    ss << "Erreur des modificateurs de chemin sur le trace de la surface " << (surface_id + 1) << ".";
-    std::throw_with_nested(std::runtime_error(ss.str()));
-  }
+  tool_paths_.push_back(delivered);
 }
-
-bool TPPWidget::anySurfaceNeedsPlanner(const std::map<int, std::vector<int>>& region_faces) const
-{
-  for (const auto& entry : region_faces)
-  {
-    if (!surfaceHasTrace(entry.first))
-    {
-      return true;
-    }
-  }
-  return false;
-}
-
-ToolPathPlannerPipeline TPPWidget::surfacePipeline(const bool has_direction,
-                                                   const bool has_endpoints,
-                                                   const Eigen::Vector3d& direction,
-                                                   const Eigen::Vector3d& start,
-                                                   const Eigen::Vector3d& end) const
-{
-  if (has_endpoints)
-  {
-    return pipeline_widget_->createPipeline(has_direction ? &direction : nullptr, start, end);
-  }
-  return pipeline_widget_->createPipeline(direction);
-}
-
-void TPPWidget::plan()
-{
-  try
-  {
-    // Une nouvelle generation renumerote les passes : la retouche en cours ne designerait
-    // plus rien et est donc perdue. La perdre en silence sur un clic est un piege.
-    if (!confirmDiscardPathEdits())
-    {
-      return;
-    }
-
-    if (std::any_of(pending_faces_.begin(), pending_faces_.end(), [](char p) { return p != 0; }))
-    {
-      QMessageBox::warning(this,
-                           "Selection not added",
-                           "The orange work selection is not part of any surface. Add it to the "
-                           "list, or erase it, then Plan.");
-      return;
-    }
-
-    // Collect the added surfaces as lists of face indices, keyed (and ordered) by surface id,
-    // keeping only the faces that survive erosion by the tool radius
-    const std::vector<char> kept = erodeSelection();
-    std::map<int, std::vector<int>> region_faces;
-    bool any_selected = false;
-    for (std::size_t f = 0; f < face_region_.size(); ++f)
-    {
-      const int region = face_region_[f];
-      if (region < 0)
-        continue;
-      any_selected = true;
-      // Une surface tracee a la main est planifiee par son trace : ses faces servent au dessin
-      if ((f < kept.size() && kept[f]) || surfaceHasTrace(region))
-      {
-        region_faces[region].push_back(static_cast<int>(f));
-      }
-    }
-
-    if (region_faces.empty())
-    {
-      const QString msg = any_selected ?
-                              "All selected regions are narrower than the tool radius, so they were "
-                              "fully eroded (a disc of that radius would overhang). Reduce the tool "
-                              "radius or select wider regions." :
-                              "No surface in the list. Select faces in the viewer, then Add surface.";
-      QMessageBox::warning(this, "Nothing to plan", msg);
-      return;
-    }
-
-    // Construit avant la boucle pour que la configuration soit refusee tout de suite, et non
-    // apres avoir fait attendre sur la premiere surface. Pas construit du tout quand toutes les
-    // surfaces sont tracees a la main : le planificateur ne sert alors a rien, et sa
-    // configuration peut rester incomplete.
-    std::unique_ptr<ToolPathPlannerPipeline> default_pipeline;
-    if (anySurfaceNeedsPlanner(region_faces))
-    {
-      default_pipeline.reset(new ToolPathPlannerPipeline(pipeline_widget_->createPipeline()));
-    }
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-
-    tool_paths_.clear();
-    std::vector<ToolPaths> unmodified_tool_paths;
-    fragments_.clear();
-
-    std::size_t skipped_regions = 0;
-    QString endpoint_report;
-    std::size_t region_index = 0;
-    for (const auto& entry : region_faces)
-    {
-      // Une surface qui porte sa propre direction de passe est planifiee par un pipeline bati
-      // pour elle. Les autres partagent celui de la configuration, qui ne se rebatit pas.
-      // Une surface tracee a la main ne passe pas par le planificateur : le trace fixe lui-meme
-      // le depart, l'arrivee et le sens de marche
-      if (surfaceHasTrace(entry.first))
-      {
-        planTracedSurface(entry.first, entry.second, unmodified_tool_paths);
-        ++region_index;
-        continue;
-      }
-      std::unique_ptr<ToolPathPlannerPipeline> own_pipeline;
-      Eigen::Vector3d direction;
-      Eigen::Vector3d start;
-      Eigen::Vector3d end;
-      const bool has_direction = surfaceDirection(entry.first, direction);
-      const bool has_endpoints = surfaceEndpoints(entry.first, start, end);
-      if (has_direction && direction.norm() < kMinDirectionNorm)
-      {
-        std::stringstream ss;
-        ss << "La surface " << (entry.first + 1) << " porte une direction de passe nulle.";
-        throw std::runtime_error(ss.str());
-      }
-      if (has_direction || has_endpoints)
-      {
-        try
-        {
-          // Depart et arrivee fixes : l'organisateur de la configuration cede la place au notre
-          own_pipeline.reset(
-              new ToolPathPlannerPipeline(surfacePipeline(has_direction, has_endpoints, direction, start, end)));
-        }
-        catch (const std::exception&)
-        {
-          std::stringstream ss;
-          ss << "Error building the pipeline for the direction of selected region " << region_index << ".";
-          std::throw_with_nested(std::runtime_error(ss.str()));
-        }
-      }
-      const ToolPathPlannerPipeline& pipeline = own_pipeline ? *own_pipeline : *default_pipeline;
-
-      // Extract the selected region as a standalone submesh
-      const pcl::PolygonMesh region_mesh = extractSubMeshFromFaces(mesh_, entry.second);
-
-      // Apply the mesh modifier stage (e.g. NormalsFromMeshFaces); it may yield multiple meshes
-      std::vector<pcl::PolygonMesh> modified_meshes;
-      try
-      {
-        modified_meshes = pipeline.mesh_modifier->modify(region_mesh);
-      }
-      catch (const std::exception&)
-      {
-        std::stringstream ss;
-        ss << "Error invoking mesh modifier on selected region " << region_index << ".";
-        std::throw_with_nested(std::runtime_error(ss.str()));
-      }
-
-      for (const pcl::PolygonMesh& mesh : modified_meshes)
-      {
-        // Plan the tool path
-        ToolPaths path;
-        try
-        {
-          path = pipeline.planner->plan(mesh);
-        }
-        catch (const std::exception&)
-        {
-          std::stringstream ss;
-          ss << "Error invoking tool path planner on selected region " << region_index << ".";
-          std::throw_with_nested(std::runtime_error(ss.str()));
-        }
-
-        // Skip regions the planner could not turn into a usable path (e.g. a tiny stray selection
-        // or a region smaller than the raster spacing). Applying tool path modifiers to an empty
-        // path would otherwise throw (out-of-range access).
-        bool has_waypoints = false;
-        for (const ToolPath& tp : path)
-        {
-          for (const ToolPathSegment& seg : tp)
-          {
-            if (!seg.empty())
-            {
-              has_waypoints = true;
-              break;
-            }
-          }
-          if (has_waypoints)
-            break;
-        }
-        if (!has_waypoints)
-        {
-          ++skipped_regions;
-          continue;
-        }
-
-        fragments_.push_back(mesh);
-        unmodified_tool_paths.push_back(path);
-
-        try
-        {
-          tool_paths_.push_back(pipeline.tool_path_modifier->modify(path));
-          if (has_endpoints)
-          {
-            endpoint_report += describeEndpointGaps(entry.first, tool_paths_.back());
-          }
-        }
-        catch (const std::exception&)
-        {
-          std::stringstream ss;
-          ss << "Error invoking tool path modifier for selected region " << region_index << ".";
-          std::throw_with_nested(std::runtime_error(ss.str()));
-        }
-      }
-
-      ++region_index;
-    }
-
-    // Show the planned submeshes as colored fragments (togglable via "Show modified mesh" and saved
-    // by "Save modified mesh")
-    renderer_->RemoveActor(mesh_fragment_actor_);
-    mesh_fragment_actor_ = createMeshActors(fragments_);
-    renderer_->AddActor(mesh_fragment_actor_);
-    mesh_fragment_actor_->SetVisibility(ui_->action_show_modified_mesh->isChecked());
-
-    QApplication::restoreOverrideCursor();
-
-    // Render the unmodified tool paths
-    {
-      renderer_->RemoveActor(unmodified_tool_path_actor_);
-      unmodified_tool_path_actor_ = createToolPathActors(unmodified_tool_paths, tube_filter_->GetOutputPort());
-      renderer_->AddActor(unmodified_tool_path_actor_);
-      unmodified_tool_path_actor_->SetVisibility(ui_->action_show_unmodified_tool_path->isChecked());
-    }
-
-    // Render the unmodified connected paths
-    {
-      renderer_->RemoveActor(unmodified_connected_path_actor_);
-      unmodified_connected_path_actor_ =
-          createToolPathPolylineActor(unmodified_tool_paths, tube_filter_->GetOutputPort());
-      renderer_->AddActor(unmodified_connected_path_actor_);
-      unmodified_connected_path_actor_->SetVisibility(ui_->action_show_unmodified_tool_path_lines->isChecked());
-    }
-
-    // Hand the planned passes to the Trajectory dock. Its recipe starts as the identity, so what
-    // it delivers is the generation itself until the operator retouches it. Drawing the modified
-    // tool path and the connected path is its callback's job from here on.
-    path_edit_->setGenerated(flattenToolPaths(tool_paths_));
-    if (!endpoint_report.isEmpty())
-    {
-      statusBar()->showMessage(endpoint_report.trimmed());
-    }
-    if (auto_chain_check_box_->isChecked() && path_edit_->passes().size() > 1)
-    {
-      path_edit_->selectPass(0);
-      path_edit_->chainFromSelected();
-    }
-    updateCoverage();
-
-    // Render
-    render();
-
-    // Let the user know if some selected regions produced no usable tool path
-    if (skipped_regions > 0)
-    {
-      QMessageBox::information(
-          this,
-          "Some regions skipped",
-          QString("%1 selected region(s) produced no tool path and were skipped.\n\nThis usually means "
-                  "the region is too small for the planner's raster spacing, or a stray single-face "
-                  "selection. Adjust the region or the planner settings, or clear and reselect.")
-              .arg(skipped_regions));
-    }
-  }
-  catch (const std::exception& ex)
-  {
-    QApplication::restoreOverrideCursor();
-
-    // Les regions deja planifiees sont dans tool_paths_, celles d'apres non. Garder ce
-    // resultat partiel laisserait afficher, et enregistrer, un chemin ampute en silence.
-    clearPlannedPaths();
-
-    std::stringstream ss;
-    printException(ex, ss);
-    QMessageBox::warning(this, "Tool Path Planning Error", QString::fromStdString(ss.str()));
-  }
-}
-
 void TPPWidget::saveModifiedMeshes(const QDir& save_dir)
 {
   // Extract the submeshes from the actor that holds the modified meshes
@@ -2996,64 +2523,8 @@ void TPPWidget::onPathEdited()
   renderer_->AddActor(connected_path_actor_);
   connected_path_actor_->SetVisibility(ui_->action_show_modified_tool_path_lines->isChecked());
 
-  updateCoverage();
   updateDiscCircles();
   updatePathHighlight();
-}
-
-/** @brief Phrase affichee sous le dock pour une mesure de couverture */
-QString describeCoverage(const CoverageResult& coverage)
-{
-  if (coverage.uncovered_faces.empty())
-  {
-    return QString("Couverture du disque : 100 % des %1 faces planifiees.").arg(coverage.selected_count);
-  }
-  return QString("Couverture du disque : %1 % ; %2 faces sur %3 hors portee, en noir dans la vue.")
-      .arg(coverage.ratio * 100.0, 0, 'f', 1)
-      .arg(coverage.uncovered_faces.size())
-      .arg(coverage.selected_count);
-}
-
-std::vector<int> TPPWidget::plannedFaces() const
-{
-  // Les faces planifiees sont celles des surfaces, moins ce que l'erosion par le rayon a retire
-  const std::vector<char> kept = erodeSelection();
-  std::vector<int> planned;
-  for (std::size_t f = 0; f < face_region_.size(); ++f)
-  {
-    if (face_region_[f] >= 0 && f < kept.size() && kept[f])
-    {
-      planned.push_back(static_cast<int>(f));
-    }
-  }
-  return planned;
-}
-
-void TPPWidget::updateCoverage()
-{
-  face_uncovered_.assign(face_region_.size(), 0);
-  if (path_edit_ == nullptr || path_edit_->passes().empty())
-  {
-    coverage_label_->clear();
-    updateSelectionColors();
-    return;
-  }
-  const bool radius_enabled = tool_radius_enabled_check_box_->isChecked() && tool_radius_spin_box_->value() > 0.0;
-  if (!radius_enabled)
-  {
-    coverage_label_->setText("Couverture du disque : activez un rayon d'outil non nul pour la mesurer.");
-    updateSelectionColors();
-    return;
-  }
-
-  const CoverageResult coverage = computeCoverage(
-      path_edit_->passes(), face_centroids_, plannedFaces(), tool_radius_spin_box_->value() / 1000.0, kSkirtPoses);
-  for (const int face : coverage.uncovered_faces)
-  {
-    face_uncovered_[static_cast<std::size_t>(face)] = 1;
-  }
-  coverage_label_->setText(describeCoverage(coverage));
-  updateSelectionColors();
 }
 
 void TPPWidget::updatePathHighlight()
@@ -3094,11 +2565,6 @@ void TPPWidget::clearPlannedPaths()
   if (path_edit_ != nullptr)
   {
     path_edit_->setGenerated(std::vector<ToolPathSegment>());
-  }
-  face_uncovered_.clear();
-  if (coverage_label_ != nullptr)
-  {
-    coverage_label_->clear();
   }
   renderer_->RemoveActor(disc_actor_);
   disc_actor_ = nullptr;
@@ -3189,28 +2655,51 @@ void TPPWidget::savePathEdits(const QString& tool_path_file)
                              .arg(QString::fromStdString(ex.what())));
   }
 }
-
-void TPPWidget::onLoadPathEdits(const bool /*checked*/)
+void TPPWidget::loadToolPaths(const QString& file)
 {
-  if (path_edit_->generated().empty())
+  std::vector<ToolPaths> loaded;
+  try
   {
-    QMessageBox::warning(this, "Aucune generation", "Planifiez un chemin avant de charger une retouche.");
+    loaded = YAML::LoadFile(file.toStdString()).as<std::vector<ToolPaths>>();
+  }
+  catch (const std::exception& ex)
+  {
+    throw std::runtime_error("Le fichier " + file.toStdString() + " ne se lit pas comme un chemin d'outil : " +
+                             ex.what());
+  }
+  // Le chemin charge devient la generation : les fragments de la vue n'ont plus de sens, le dock
+  // Trajectoire repart d'une recette identite sur ces passes
+  clearPlannedPaths();
+  tool_paths_ = loaded;
+  showPlannedPaths(loaded);
+  std::size_t pose_count = 0;
+  for (const ToolPathSegment& pass : path_edit_->passes())
+  {
+    pose_count += pass.size();
+  }
+  statusBar()->showMessage(QString("Chemin charge : %1 passe(s), %2 poses. Retouchez, puis Save tool paths.")
+                               .arg(path_edit_->passes().size())
+                               .arg(pose_count));
+}
+
+void TPPWidget::onLoadToolPaths()
+{
+  if (!confirmDiscardPathEdits())
+  {
     return;
   }
-
-  const QString file = QFileDialog::getOpenFileName(this, "Charger une retouche", "", "YAML files (*.yaml)");
+  const QString file = QFileDialog::getOpenFileName(this, "Charger un chemin", "", "YAML files (*.yaml)");
   if (file.isEmpty())
   {
     return;
   }
-
   try
   {
-    path_edit_->applyRecipeFile(readRecipeFile(file.toStdString()), kFingerprintTolerance);
+    loadToolPaths(file);
   }
   catch (const std::exception& ex)
   {
-    QMessageBox::warning(this, "Retouche refusee", QString::fromStdString(ex.what()));
+    QMessageBox::warning(this, "Chemin non charge", QString::fromStdString(ex.what()));
   }
 }
 

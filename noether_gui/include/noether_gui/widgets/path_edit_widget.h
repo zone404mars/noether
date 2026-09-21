@@ -101,6 +101,13 @@ public:
   /** @brief Goes back to the generation, every pass delivered alone and in order */
   void reset();
 
+  /**
+   * @brief Ne garde que Monter, Descendre, Supprimer et Annuler
+   * @details Pour une IHM tout-manuel : le sens, la soudure, le degroupage et l'enchainement
+   * n'ont pas cours quand chaque passe est un trace fait a la main.
+   */
+  void hideAdvancedControls();
+
   /** @brief What forbids delivering the current recipe, one message per fault */
   std::vector<std::string> faults() const;
 

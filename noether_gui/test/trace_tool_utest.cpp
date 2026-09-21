@@ -97,6 +97,36 @@ TEST(TraceTool, NoPoseWithoutADirectionOfTravel)
                std::invalid_argument);
 }
 
+TEST(TraceTool, ApproachAndRetractStandAboveTheEnds)
+{
+  const std::vector<Eigen::Vector3d> points = { Eigen::Vector3d::Zero(), Eigen::Vector3d(0.1, 0.0, 0.0) };
+  const std::vector<Eigen::Vector3d> normals(2, Eigen::Vector3d::UnitZ());
+  const ToolPathSegment contact = tracePoses(points, normals);
+  const ToolPathSegment pass = withApproachAndRetract(contact, 0.05);
+  ASSERT_EQ(pass.size(), 4u);
+  EXPECT_TRUE(pass.front().translation().isApprox(Eigen::Vector3d(0.0, 0.0, 0.05)));
+  EXPECT_TRUE(pass.back().translation().isApprox(Eigen::Vector3d(0.1, 0.0, 0.05)));
+  EXPECT_TRUE(pass.front().linear().isApprox(contact.front().linear()));
+  EXPECT_TRUE(pass[1].isApprox(contact.front()));
+  EXPECT_TRUE(pass[2].isApprox(contact.back()));
+}
+
+TEST(TraceTool, ApproachFollowsATiltedToolAxis)
+{
+  // Normale inclinee : l'approche part le long de cet axe, pas a la verticale
+  const Eigen::Vector3d normal = Eigen::Vector3d(1.0, 0.0, 1.0).normalized();
+  const ToolPathSegment contact =
+      tracePoses({ Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.1, 0.0) }, { normal, normal });
+  const ToolPathSegment pass = withApproachAndRetract(contact, 0.1);
+  EXPECT_TRUE(pass.front().translation().isApprox(normal * 0.1));
+}
+
+TEST(TraceTool, RefusesApproachWithoutContactOrHeight)
+{
+  EXPECT_THROW(withApproachAndRetract({}, 0.05), std::invalid_argument);
+  EXPECT_THROW(withApproachAndRetract({ Eigen::Isometry3d::Identity() }, 0.0), std::invalid_argument);
+}
+
 int main(int argc, char** argv)
 {
   testing::InitGoogleTest(&argc, argv);

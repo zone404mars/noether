@@ -45,4 +45,16 @@ std::vector<Eigen::Vector3d> sampleTrace(const std::vector<Eigen::Vector3d>& ver
  */
 ToolPathSegment tracePoses(const std::vector<Eigen::Vector3d>& points, const std::vector<Eigen::Vector3d>& normals);
 
+/**
+ * @brief Ajoute une pose d'approche devant et une pose de retrait derriere une suite de poses de
+ * contact.
+ * @details L'approche est la premiere pose de contact decalee de `height` le long de son axe z,
+ * l'axe outil qui pointe vers l'outil, hors de la piece ; le retrait, la derniere pose decalee de
+ * meme. L'orientation ne change pas : l'outil descend droit sur la piece et remonte droit.
+ * @param contact Poses de contact, au moins une
+ * @param height Hauteur d'approche et de retrait, en metres, strictement positive
+ * @throws std::invalid_argument si `contact` est vide ou si `height` <= 0
+ */
+ToolPathSegment withApproachAndRetract(const ToolPathSegment& contact, double height);
+
 }  // namespace noether
