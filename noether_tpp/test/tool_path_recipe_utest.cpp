@@ -369,6 +369,95 @@ TEST(PoseMoves, AVersionOneFileReadsWithoutMoves)
   EXPECT_TRUE(read.recipe.empty());
 }
 
+/// @brief Pose a une position donnee, orientation identite
+Eigen::Isometry3d poseAt(double x, double y)
+{
+  Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+  pose.translation() = Eigen::Vector3d(x, y, 0.0);
+  return pose;
+}
+
+/// Les poses ajoutees prennent place apres la pose designee, sans decaler les autres insertions
+TEST(PoseInsertions, PlaceThePosesAfterTheirGenerationRank)
+{
+  const std::vector<ToolPathSegment> generated = { straightSegment(0.0, 6) };
+  PoseInsertion late{ 0, 3, { poseAt(9.0, 1.0) } };
+  PoseInsertion early{ 0, 1, { poseAt(8.0, 1.0), poseAt(8.0, 2.0) } };
+  const std::vector<ToolPathSegment> result = applyPoseInsertions(generated, { late, early });
+  ASSERT_EQ(result[0].size(), 9u);
+  EXPECT_TRUE(result[0][1].isApprox(generated[0][1]));
+  EXPECT_TRUE(result[0][2].translation().isApprox(Eigen::Vector3d(8.0, 1.0, 0.0)));
+  EXPECT_TRUE(result[0][3].translation().isApprox(Eigen::Vector3d(8.0, 2.0, 0.0)));
+  EXPECT_TRUE(result[0][4].isApprox(generated[0][2]));
+  EXPECT_TRUE(result[0][5].isApprox(generated[0][3]));
+  EXPECT_TRUE(result[0][6].translation().isApprox(Eigen::Vector3d(9.0, 1.0, 0.0)));
+  EXPECT_TRUE(result[0][8].isApprox(generated[0][5]));
+}
+
+/// Une insertion sans place dans la generation est ignoree ; pour une meme place, la derniere gagne
+TEST(PoseInsertions, IgnoreWhatNoLongerExistsAndKeepTheLast)
+{
+  const std::vector<ToolPathSegment> generated = { straightSegment(0.0, 6) };
+  PoseInsertion missing_pass{ 4, 0, { poseAt(1.0, 1.0) } };
+  PoseInsertion after_last{ 0, 5, { poseAt(1.0, 1.0) } };
+  PoseInsertion first{ 0, 2, { poseAt(2.0, 1.0), poseAt(2.0, 2.0) } };
+  PoseInsertion second{ 0, 2, { poseAt(3.0, 1.0) } };
+  const std::vector<ToolPathSegment> result = applyPoseInsertions(generated, { missing_pass, after_last, first, second });
+  ASSERT_EQ(result.size(), 1u);
+  ASSERT_EQ(result[0].size(), 7u);
+  EXPECT_TRUE(result[0][3].translation().isApprox(Eigen::Vector3d(3.0, 1.0, 0.0)));
+}
+
+/// Une passe inversee par la recette parcourt aussi ses poses ajoutees a l'envers, a leur place
+TEST(PoseInsertions, FollowAPassTheRecipeReverses)
+{
+  const std::vector<ToolPathSegment> generated = { straightSegment(0.0, 6) };
+  const std::vector<ToolPathSegment> densified =
+      applyPoseInsertions(generated, { PoseInsertion{ 0, 2, { poseAt(0.025, 0.0) } } });
+  PathRecipe reversed = { { SourceSegment{ 0, true } } };
+  const ToolPath passes = assemblePasses(densified, reversed);
+  ASSERT_EQ(passes.size(), 1u);
+  ASSERT_EQ(passes[0].size(), 7u);
+  // Rangs 0 a 6 a l'endroit : 0, 1, 2, ajoutee, 3, 4, 5 ; a l'envers l'ajoutee est au rang 3
+  EXPECT_NEAR(passes[0][3].translation().x(), 0.025, 1e-12);
+  EXPECT_NEAR(passes[0][2].translation().x(), 0.03, 1e-12);
+  EXPECT_NEAR(passes[0][4].translation().x(), 0.02, 1e-12);
+}
+
+/// Les poses ajoutees survivent au fichier de retouche, position et orientation
+TEST(PoseInsertions, SurviveTheRecipeFile)
+{
+  RecipeFile written;
+  written.source = fingerprintSegments({ straightSegment(0.0, 6) });
+  written.recipe = identityRecipe(1);
+  Eigen::Isometry3d tilted = poseAt(0.1, 0.2);
+  tilted.linear() = Eigen::AngleAxisd(0.4, Eigen::Vector3d(0.0, 1.0, 1.0).normalized()).toRotationMatrix();
+  written.insertions.push_back(PoseInsertion{ 0, 2, { poseAt(0.3, 0.4), tilted } });
+
+  const std::string file = std::string(TEST_TMP_DIR) + "/recipe_insertions.yaml";
+  writeRecipeFile(file, written);
+  const RecipeFile read = readRecipeFile(file);
+  std::remove(file.c_str());
+
+  ASSERT_EQ(read.insertions.size(), 1u);
+  EXPECT_EQ(read.insertions[0].segment, 0u);
+  EXPECT_EQ(read.insertions[0].after, 2u);
+  ASSERT_EQ(read.insertions[0].poses.size(), 2u);
+  EXPECT_TRUE(read.insertions[0].poses[1].isApprox(tilted, 1e-9));
+}
+
+/// Un fichier de version 2 se relit, sans insertion
+TEST(PoseInsertions, AVersionTwoFileReadsWithoutInsertions)
+{
+  const std::string file = std::string(TEST_TMP_DIR) + "/recipe_v2.yaml";
+  std::ofstream stream(file.c_str());
+  stream << "schema_version: 2\nsource:\n  segments: []\npasses: []\nmoves: []\n";
+  stream.close();
+  const RecipeFile read = readRecipeFile(file);
+  std::remove(file.c_str());
+  EXPECT_TRUE(read.insertions.empty());
+}
+
 TEST(ToolPathRecipe, RefusesAMalformedRecipeFileNamingIt)
 {
   const std::string file = std::string(TEST_TMP_DIR) + "/recipe_malformed.yaml";

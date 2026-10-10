@@ -420,6 +420,72 @@ TEST(PathEditWidget, MovesAPoseAndUndoesTheWholeDragAtOnce)
   EXPECT_NEAR(widget.passes()[1][3].translation().y(), 0.0, 1e-12);
 }
 
+/// Densifier ajoute des poses dans la passe livree, d'un seul point d'annulation, et marque la retouche
+TEST(PathEditWidget, InsertedPosesJoinThePassAndUndoAtOnce)
+{
+  PathEditWidget widget(kMinPoses);
+  widget.setGenerated(threePasses());
+  Eigen::Isometry3d middle = Eigen::Isometry3d::Identity();
+  middle.translation() = Eigen::Vector3d(1.035, 0.0, 0.0);
+  Eigen::Isometry3d later = Eigen::Isometry3d::Identity();
+  later.translation() = Eigen::Vector3d(1.065, 0.0, 0.0);
+  widget.insertPoses({ PoseInsertion{ 1, 3, { middle } }, PoseInsertion{ 1, 6, { later } } });
+
+  ASSERT_EQ(widget.passes()[1].size(), 12u);
+  EXPECT_NEAR(widget.passes()[1][4].translation().x(), 1.035, 1e-12);
+  EXPECT_NEAR(widget.passes()[1][8].translation().x(), 1.065, 1e-12);
+  EXPECT_EQ(widget.generated()[1].size(), 10u);
+  EXPECT_TRUE(widget.isRetouched());
+
+  widget.undo();
+  EXPECT_TRUE(widget.insertions().empty());
+  EXPECT_EQ(widget.passes()[1].size(), 10u);
+  EXPECT_FALSE(widget.isRetouched());
+}
+
+/// Redensifier une place remplace l'ajout precedent ; une nouvelle generation oublie tout
+TEST(PathEditWidget, ADensifiedPlaceIsReplacedAndANewGenerationForgetsIt)
+{
+  PathEditWidget widget(kMinPoses);
+  widget.setGenerated(threePasses());
+  Eigen::Isometry3d first = Eigen::Isometry3d::Identity();
+  first.translation() = Eigen::Vector3d(0.033, 0.0, 0.0);
+  Eigen::Isometry3d second = Eigen::Isometry3d::Identity();
+  second.translation() = Eigen::Vector3d(0.036, 0.0, 0.0);
+  widget.insertPoses({ PoseInsertion{ 0, 3, { first, first } } });
+  widget.insertPoses({ PoseInsertion{ 0, 3, { second } } });
+  ASSERT_EQ(widget.insertions().size(), 1u);
+  ASSERT_EQ(widget.passes()[0].size(), 11u);
+  EXPECT_NEAR(widget.passes()[0][4].translation().x(), 0.036, 1e-12);
+
+  // Redensifier plus large : l'ecart deja sous le pas recoit une insertion vide, qui efface l'ajout
+  widget.insertPoses({ PoseInsertion{ 0, 3, {} } });
+  EXPECT_TRUE(widget.insertions().empty());
+  EXPECT_EQ(widget.passes()[0].size(), 10u);
+  widget.undo();
+  EXPECT_EQ(widget.passes()[0].size(), 11u);
+
+  widget.setGenerated(threePasses());
+  EXPECT_TRUE(widget.insertions().empty());
+  EXPECT_EQ(widget.passes()[0].size(), 10u);
+}
+
+/// Les poses ajoutees se rejouent depuis le fichier de retouche
+TEST(PathEditWidget, ReplaysInsertionsFromTheRecipeFile)
+{
+  PathEditWidget widget(kMinPoses);
+  widget.setGenerated(threePasses());
+  RecipeFile content;
+  content.recipe = identityRecipe(3);
+  content.source = fingerprintSegments(threePasses());
+  Eigen::Isometry3d added = Eigen::Isometry3d::Identity();
+  added.translation() = Eigen::Vector3d(2.015, 0.0, 0.0);
+  content.insertions.push_back(PoseInsertion{ 2, 1, { added } });
+  widget.applyRecipeFile(content, kTolerance);
+  ASSERT_EQ(widget.passes()[2].size(), 11u);
+  EXPECT_NEAR(widget.passes()[2][2].translation().x(), 2.015, 1e-12);
+}
+
 TEST(PathEditWidget, MovedPosesFollowTheRecipe)
 {
   PathEditWidget widget(kMinPoses);

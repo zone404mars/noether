@@ -30,3 +30,11 @@ target_compile_definitions(
 add_executable(${PROJECT_NAME}_trace_tool_utest trace_tool_utest.cpp)
 target_link_libraries(${PROJECT_NAME}_trace_tool_utest PRIVATE ${PROJECT_NAME} GTest::GTest GTest::Main)
 add_gtest_discover_tests(${PROJECT_NAME}_trace_tool_utest)
+
+add_executable(${PROJECT_NAME}_step_import_utest step_import_utest.cpp)
+target_link_libraries(${PROJECT_NAME}_step_import_utest PRIVATE ${PROJECT_NAME} GTest::GTest GTest::Main)
+add_gtest_discover_tests(${PROJECT_NAME}_step_import_utest)
+
+add_executable(${PROJECT_NAME}_translator_utest translator_utest.cpp)
+target_link_libraries(${PROJECT_NAME}_translator_utest PRIVATE ${PROJECT_NAME} Qt5::Widgets GTest::GTest)
+add_gtest_discover_tests(${PROJECT_NAME}_translator_utest)

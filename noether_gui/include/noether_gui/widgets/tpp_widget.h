@@ -2,7 +2,10 @@
 
 #include <noether_tpp/core/face_selection.h>
 #include <noether_gui/widgets/outline_tool.h>
+#include <noether_gui/widgets/step_import.h>
+#include <noether_gui/widgets/translator.h>
 #include <noether_tpp/core/face_coverage.h>
+#include <noether_tpp/core/tool_path_recipe.h>
 #include <noether_tpp/core/types.h>
 #include <noether_tpp/core/tool_path_planner_pipeline.h>
 #include <noether_tpp/core/tool_path_recipe.h>
@@ -11,7 +14,9 @@
 #include <vtkSmartPointer.h>
 #include <pcl/PolygonMesh.h>
 #include <map>
+#include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -22,9 +27,16 @@ class QDoubleSpinBox;
 class QCheckBox;
 class QLabel;
 class QLayout;
-class QListWidget;
-class QListWidgetItem;
+class QAbstractButton;
+class QAction;
+class QButtonGroup;
+class QGridLayout;
 class QPushButton;
+class QStackedWidget;
+class QToolButton;
+class QTreeWidget;
+class QTreeWidgetItem;
+class QVBoxLayout;
 class vtkActor;
 class vtkPolyDataMapper;
 class vtkProp;
@@ -35,6 +47,7 @@ class vtkTubeFilter;
 class vtkPropAssembly;
 class vtkPolyData;
 class vtkActor2D;
+class vtkCellLocator;
 class vtkCellPicker;
 class vtkPolyDataMapper2D;
 class vtkUnsignedCharArray;
@@ -48,6 +61,7 @@ namespace noether
 {
 class ConfigurableTPPPipelineWidget;
 class PathEditWidget;
+class ProcessRibbon;
 class WidgetFactory;
 
 enum class LineStyle
@@ -89,6 +103,13 @@ public:
    * @brief Sets the file path for the mesh to use for tool path planning
    */
   void setMeshFile(const QString& file);
+
+  /**
+   * @brief Fixe le fichier de finesse utilise pour convertir un STEP ouvert par ::setMeshFile
+   * @details Sans ce fichier, un STEP est refuse : la finesse de maillage n'a pas de defaut.
+   * @param file Fichier YAML lu par readStepTessellation, relu a chaque ouverture de STEP
+   */
+  void setStepTessellationFile(const QString& file);
 
   /**
    * @brief Configures the GUI tool path planning pipeline from a YAML configuration file
@@ -157,6 +178,28 @@ public:
 
 protected:
   void onLoadMesh(const bool /*checked*/);
+  /**
+   * @brief Convertit un STEP en PLY a cote de lui, et dit a l'operateur ce qui a echoue
+   * @return Chemin du PLY produit, vide si la conversion n'a pas abouti
+   */
+  QString convertStep(const QString& step_file);
+  /**
+   * @brief Lit la finesse et lance la conversion d'un STEP, curseur d'attente affiche
+   * @throws std::runtime_error si la configuration de finesse ou la conversion echoue
+   */
+  StepConversion runStepConversion(const QString& step_file);
+  /**
+   * @brief Affiche l'etendue du maillage charge dans la barre d'etat
+   * @param converted_from_step Vrai quand le maillage vient d'un STEP, dont le resume est deja affiche
+   */
+  void showMeshExtent(bool converted_from_step);
+  /** @brief Fixe le texte de l'etiquette d'etendue dans les deux langues et l'affiche */
+  void setMeshInfo(const Bilingual& text);
+  /**
+   * @brief Charge un PLY ou un STL et reconstruit les donnees de selection
+   * @return Faux si le fichier ne se lit pas ; le maillage charge reste alors en place
+   */
+  bool loadMesh(const QString& mesh_file);
   void onClearSelection(const bool /*checked*/);
   void onSaveModifiedMeshes(const bool /*checked*/);
   void onSaveToolPaths(const bool /*checked*/);
@@ -189,8 +232,249 @@ protected:
   bool confirmDiscardPathEdits();
   /** @brief Drops the planning and its retouching, and takes their actors off the viewer */
   void clearPlannedPaths();
-  /** @brief Builds the Trajectory dock and wires it to the viewer; called once from the constructor */
-  void buildPathEditDock();
+
+  // Disposition de la fenetre, dans tpp_widget_layout.cpp
+
+  /** @brief Texte de l'interface dans la langue courante */
+  QString say(const char* french, const char* english) const;
+  /** @brief Passe l'interface dans une langue et la garde pour le prochain demarrage */
+  void applyLanguage(Language language);
+  /** @brief Lie les menus et les actions du fichier .ui aux deux langues */
+  void translateMenus();
+  /** @brief Lie les actions du fichier .ui aux deux langues et retire leurs anciennes infobulles */
+  void translateActions();
+  /** @brief Barre du process en haut de la fenetre : un onglet par etape, une rangee d'outils par onglet */
+  void buildRibbon();
+  /** @brief Outil a bascule du groupe exclusif : un seul outil prend la souris a la fois */
+  QToolButton* addModeTool(int tab, const QString& icon, const Bilingual& label, const Bilingual& tip);
+  /** @brief Relache le Trace manuel ou Deplacer des points : l'outil de selection courant reprend la souris */
+  void releaseDragTools();
+  /** @brief Outil Reprendre un chemin : aide affichee, puis choix du fichier */
+  void onReopenToolPathTool();
+  /** @brief Les quatre outils de selection de l'onglet 2, l'outil courant arme */
+  void addSelectionTools(int tab);
+  /** @brief Outil Valider la surface : aide affichee, puis validation de la selection en cours */
+  void onAddSurfaceTool();
+  /** @brief Outil Generer : aide affichee, puis generation */
+  void onGenerateTool();
+  /** @brief Outils de l'onglet Traitement qui retouchent les points du chemin : deplacer, densifier */
+  void addPointTools(int tab);
+  /** @brief Onglet 1 : ouvrir une piece, reprendre un chemin */
+  void buildFileTab(int tab);
+  /** @brief Onglet 2 : les outils de selection et la validation d'une surface */
+  void buildSelectionTab(int tab);
+  /** @brief Relie un bouton de selection a son outil : enfonce, il devient l'outil courant */
+  void connectSelectionTool(QToolButton* button, SelectionTool tool);
+  /** @brief Bouton de la barre qui porte un outil de selection */
+  QToolButton* buttonOfTool(SelectionTool tool) const;
+  /** @brief Rend l'outil courant et remet a zero ce qui depend de l'ancien */
+  void selectTool(SelectionTool tool);
+  /** @brief Page d'options d'un outil de selection */
+  void showSelectionOptions(SelectionTool tool);
+  /** @brief Onglet 3 : trace manuel, generation, deplacement de points */
+  void buildTreatmentTab(int tab);
+  /** @brief Onglet 4 : ordre des passes et export */
+  void buildPathTab(int tab);
+  /** @brief Onglet Affichage : calques, vues standard, langue */
+  void buildViewTab(int tab);
+
+  /** @brief Panneau de droite : titre, aide, et la page d'options de l'outil courant */
+  void buildOptionsDock();
+  /** @brief Titre et aide du panneau des options, lies a la langue, ajoutes en tete du panneau */
+  void createOptionsHeader(QVBoxLayout* layout);
+  /** @brief Cree toutes les pages d'options, une fois, depuis le constructeur */
+  void buildOptionPages();
+  /** @brief Ajoute une page au panneau des options sous un identifiant */
+  void addOptionPage(const std::string& id, QWidget* page);
+  /**
+   * @brief Affiche une page d'options avec son titre et son aide
+   * @throws std::out_of_range si aucune page ne porte cet identifiant
+   */
+  void showOptions(const std::string& id, const Bilingual& title, const Bilingual& help);
+  /** @brief Etiquette a retour a la ligne, liee aux deux langues */
+  QLabel* boundLabel(const Bilingual& text);
+  /** @brief Ligne d'options : une etiquette liee, puis le champ */
+  QWidget* labelledRow(const Bilingual& label, QWidget* field);
+  /** @brief Page Ouvrir : formats acceptes et finesse STEP du projet */
+  QWidget* buildOpenPage();
+  /** @brief Affiche la page Ouvrir, finesse relue dans le fichier a chaque affichage */
+  void showOpenOptions();
+  /** @brief Finesse STEP du projet en une phrase, ou la raison pour laquelle elle manque */
+  QString stepTessellationText() const;
+  /** @brief Page Region : angle de planeite */
+  QWidget* buildRegionPage();
+  /** @brief Page Brosse et Gomme : diametre partage */
+  QWidget* buildBrushPage();
+  /** @brief Page Trace manuel : pas, approche, rayon outil, corrections */
+  QWidget* buildTracePage();
+  /** @brief Champs de la page Trace manuel et leurs connexions */
+  void createTraceFields();
+  /** @brief Redessine ce qui depend du rayon de l'outil : erosion, cercles du disque, trace */
+  void refreshToolRadiusViews();
+  /** @brief Page Deplacer des points : valider, annuler */
+  QWidget* buildMovePage();
+  /** @brief Page Ordre des passes : le panneau de retouche du chemin */
+  QWidget* buildOrderPage();
+  /** @brief Affiche la page Ordre des passes */
+  void showOrderOptions();
+  /** @brief Page Calques : une case par action du menu Affichage, et les reperes */
+  QWidget* buildLayersPage();
+  /** @brief Case de calque gardee d'accord avec une action du menu Affichage */
+  void addLayerBox(QVBoxLayout* layout, QAction* action, const Bilingual& label);
+  /** @brief Affiche la page Calques */
+  void showLayersOptions();
+  /** @brief Page Vues standard : face, dessus, cote, isometrique */
+  QWidget* buildViewsPage();
+  /** @brief Bouton de vue standard place dans la grille */
+  void addViewButton(QGridLayout* layout, int row, int column, const Bilingual& label,
+                     const Eigen::Vector3d& direction, const Eigen::Vector3d& up);
+  /**
+   * @brief Oriente la camera puis recadre la scene
+   * @param direction Cote d'ou la camera regarde, dans le repere de la piece
+   * @param up Haut de l'image
+   */
+  void setCameraView(const Eigen::Vector3d& direction, const Eigen::Vector3d& up);
+  /** @brief Page Langue : francais ou anglais */
+  QWidget* buildLanguagePage();
+
+  /** @brief Panneau de gauche : piece, surfaces et leur trace, passes */
+  void buildFeatureTree();
+  /** @brief Boutons sous l'arbre : reprendre et supprimer la surface courante */
+  QWidget* buildSurfaceButtons();
+  /** @brief Recalcule tous les textes de l'arbre, dans la langue courante */
+  void relabelTree();
+  /** @brief Element de la surface courante, ou celui de son trace ramene a la surface ; nullptr sinon */
+  QTreeWidgetItem* currentSurfaceItem() const;
+  /** @brief Identifiant de la surface courante de l'arbre, -1 sans surface courante */
+  int selectedSurfaceId() const;
+  /** @brief Recalcule le texte d'une surface et de son trace */
+  void relabelSurface(QTreeWidgetItem* item);
+  /** @brief Valide la selection en cours comme une surface et l'ajoute a l'arbre */
+  void onAddSurface();
+  /** @brief Supprime la surface courante et libere ses faces */
+  void onRemoveSurface();
+  /** @brief Rend les faces de la surface courante a la selection en cours, pour la retoucher */
+  void onEditSurface();
+  /**
+   * @brief Retire une surface de l'arbre et du maillage
+   * @param back_to_selection Vrai : ses faces repassent dans la selection en cours
+   */
+  void removeSurface(QTreeWidgetItem* item, bool back_to_selection);
+  /** @brief Vide les surfaces de l'arbre */
+  void clearSurfaceItems();
+  /** @brief Case d'une surface cochee ou decochee : elle est dessinee ou non */
+  void onTreeItemChanged(QTreeWidgetItem* item);
+  /** @brief Element courant de l'arbre change : trace de la surface, ou passe choisie */
+  void onTreeCurrentChanged();
+  /** @brief Reconstruit les passes de l'arbre depuis le panneau de retouche */
+  void refreshPassItems();
+  /** @brief Rend courante dans l'arbre la passe d'un rang, sans rien declencher */
+  void selectPassItem(int row);
+
+  // Disques et couverture, dans tpp_widget_coverage.cpp
+
+  /** @brief Rayon du disque dessine et mesure, en metres ; 0 quand le rayon d'outil est desactive */
+  double discRadius() const;
+  /**
+   * @brief Disques de l'outil autour de poses : pleins ou en cercles, sureleves le long de leur axe z
+   * @details Le style et la surelevation viennent des reglages de la page Calques.
+   */
+  vtkSmartPointer<vtkPolyData> discFootprints(const std::vector<Eigen::Isometry3d>& poses) const;
+  /** @brief Couleur, epaisseur et opacite d'un acteur de disques, selon qu'ils sont pleins ou non */
+  void styleDiscActor(vtkActor& actor, const unsigned char rgb[3], float line_width) const;
+  /** @brief Reglages des disques sur la page Calques : pleins, surelevation, zones non couvertes */
+  QWidget* buildDiscGroup();
+  /** @brief Redessine ce qui depend des reglages des disques quand ils changent */
+  void connectDiscGroup();
+  /** @brief Vrai quand les faces non couvertes sont a peindre */
+  bool showsUncovered() const;
+  /** @brief Faces d'une surface validee, dans l'ordre du maillage */
+  std::vector<int> facesOfSurface(int surface_id) const;
+  /**
+   * @brief Ce que mesure la couverture pendant le trace : le trace de la surface courante
+   * @return Faux hors du trace, ou quand le trace est vide
+   */
+  bool traceCoverageInput(ToolPath& passes, std::vector<int>& faces) const;
+  /**
+   * @brief Ce que mesure la couverture apres generation : le chemin livre et les surfaces tracees
+   * @return Faux sans chemin livre
+   */
+  bool pathCoverageInput(ToolPath& passes, std::vector<int>& faces) const;
+  /**
+   * @brief Recalcule les zones non couvertes et le taux affiche
+   * @details Les faces sont decoupees en triangles d'un sixieme du rayon d'outil au plus : un grand
+   * triangle du maillage n'est ni tout couvert ni tout decouvert. Le taux est une part de l'aire.
+   */
+  void updateCoverage();
+  /** @brief Remplace la couche des zones non couvertes, visible selon la case de la page Calques */
+  void showUncoveredCells(vtkPolyData* poly);
+  /**
+   * @brief Ce que mesure la couverture : le trace en cours, sinon le chemin livre
+   * @param skirt Sortie : poses ecartees a chaque bout des passes, l'approche et le retrait du chemin livre
+   * @return Faux quand il n'y a rien a mesurer
+   */
+  bool coverageInput(ToolPath& passes, std::vector<int>& faces, std::size_t& skirt) const;
+  /**
+   * @brief Garde ce que mesure la couverture
+   * @return Vrai si cela differe de la mesure precedente, donc si elle est a refaire
+   */
+  bool rememberCoverageInput(const ToolPath& passes, const std::vector<int>& faces, double radius, std::size_t skirt);
+  /** @brief Mesure la couverture et met a jour la couche et le taux ; les faces ne sont pas vides */
+  void measureCoverage(const ToolPath& passes, const std::vector<int>& faces, double radius, std::size_t skirt);
+  /** @brief Fixe le texte de l'etiquette de couverture dans les deux langues et l'affiche */
+  void setCoverageInfo(const Bilingual& text);
+
+  // Outil Densifier, dans tpp_widget_densify.cpp
+
+  /** @brief Vrai quand l'outil Densifier de l'onglet Traitement est enfonce */
+  bool densifying() const;
+  /** @brief L'outil Densifier change d'etat : les deux points choisis sont oublies */
+  void onDensifyToggled(bool checked);
+  /** @brief Page Densifier : pas cible, points choisis, Densifier, Effacer */
+  QWidget* buildDensifyPage();
+  /** @brief Boutons Densifier et Effacer de la page Densifier */
+  void addDensifyButtons(QVBoxLayout* layout);
+  /**
+   * @brief Ajoute un point choisi pour densifier ; un troisieme clic recommence le choix
+   * @return Faux si le point n'est pas sur la meme passe generee que le premier
+   */
+  bool addDensifyEnd(const PoseMove& found);
+  /** @brief Clic dans la vue pendant Densifier : choisit le premier, puis le second point de contact */
+  void onDensifyClick(int x, int y);
+  /** @brief Recalcule le texte des points choisis, dans la langue courante */
+  void relabelDensifyEnds();
+  /** @brief Oublie les points choisis et retire leurs marques */
+  void clearDensifyEnds();
+  /** @brief Marques des points choisis dans la vue */
+  void updateDensifyMarkers();
+  /** @brief Ajoute les poses entre les deux points choisis, au pas cible, avec un point d'annulation */
+  void applyDensify();
+  /**
+   * @brief Poses a ajouter entre deux poses d'une meme passe de la generation
+   * @param step Ecart maximal voulu entre deux poses voisines, en metres
+   * @return Une insertion par ecart de A a B, reperee par le rang de la pose qui le precede ; vide
+   *         pour un ecart deja sous `step`, pour effacer un ajout precedent
+   * @throws std::out_of_range si `a` designe une passe absente de la generation
+   */
+  std::vector<PoseInsertion> densifyInsertions(const PoseMove& a, const PoseMove& b, double step) const;
+  /**
+   * @brief Poses posees sur la piece entre deux poses voisines, assez nombreuses pour que l'ecart reste sous `step`
+   * @details Les positions sont reparties sur la corde puis ramenees sur la piece ; l'orientation
+   * est calculee comme celle du trace : axe z sur la normale, axe x dans le sens de marche.
+   * @return Les poses intermediaires seules, vide si l'ecart est deja sous `step`
+   */
+  ToolPathSegment gapPoses(vtkCellLocator& locator, const Eigen::Isometry3d& from, const Eigen::Isometry3d& to,
+                           double step) const;
+  /**
+   * @brief Ramene des points sur le maillage entier : chacun sur le point le plus proche
+   * @details Le maillage entier, pas la seule surface de la passe : pres d'un angle vif ou sur une
+   * piece mince, la face la plus proche peut appartenir a une surface voisine.
+   * @param locator Localisateur construit sur selection_poly_
+   * @param normals Sortie : normale de la face portant chaque projete
+   * @return Faux si un point ne trouve aucune face
+   */
+  bool projectOnMesh(vtkCellLocator& locator, std::vector<Eigen::Vector3d>& points,
+                     std::vector<Eigen::Vector3d>& normals) const;
 
   /** @brief Builds the VTK poly data, face adjacency, per-cell color array, and resets the selection */
   void buildSelectionData();
@@ -248,19 +532,8 @@ protected:
    * @return True when the selection may become one surface
    */
   bool checkPendingIsOneSurface(std::size_t piece_count);
-  /** @brief Validates the work selection as one surface and appends it to the list */
-  void onAddSurface();
-  /** @brief Removes the surface selected in the list and frees its faces */
-  void onRemoveSurface();
-
-  /** @brief Rewrites a surface's list entry: its rank, its face count and its trace */
-  void relabelSurface(QListWidgetItem* item) const;
-  /** @brief Vrai quand le bouton « Trace manuel » de l'onglet Traitement est enfonce */
+  /** @brief Vrai quand l'outil Trace manuel de l'onglet Traitement est enfonce */
   bool tracing() const;
-  /** @brief Onglet Traitement : le trace manuel, son pas et ses corrections */
-  void buildTreatmentDock();
-  /** @brief Contenu de l'onglet Traitement */
-  QWidget* buildTreatmentPanel();
   /** @brief Le bouton Trace manuel change d'etat : il prend ou rend le tirage de la vue */
   void onTraceToggled(bool checked);
   /** @brief Le bouton Deplacer des points change d'etat : il prend ou rend le tirage de la vue */
@@ -276,9 +549,6 @@ protected:
   /** @brief Dit a l'operateur quelles surfaces n'ont pas ete generees, faute de trace */
   void reportUntracedSurfaces(const std::vector<int>& untraced);
 
-
-  /** @brief Identifiant de la surface selectionnee dans la liste, -1 sans selection */
-  int selectedSurfaceId() const;
   /** @brief Debut d'un tirage du trace : fixe le depart si le trace est vide, sinon amorce un segment */
   void onTraceDragStart(int x, int y);
   /** @brief Suite du tirage : deplace la fin provisoire du segment sur la surface */
@@ -350,8 +620,6 @@ protected:
    * @param normals Sortie : normale de la face portant chaque projete
    */
   void projectOnSurface(int surface_id, std::vector<Eigen::Vector3d>& points, std::vector<Eigen::Vector3d>& normals) const;
-  /** @brief Mention du trace manuel dans l'entree de liste d'une surface, vide sans trace */
-  QString describeTrace(int surface_id) const;
   /** @brief Vrai quand la surface porte un trace manuel d'au moins deux sommets */
   bool surfaceHasTrace(int surface_id) const;
   /**
@@ -392,6 +660,16 @@ protected:
   void onDragEnd(bool erase);
 
   std::string mesh_file_;
+  /** @brief Fichier de finesse de conversion des STEP, vide tant qu'aucun n'est fixe */
+  QString step_tessellation_file_;
+  /**
+   * @brief Etiquette permanente de la barre d'etat : etendue du maillage charge, et unite d'un STEP
+   * @details Permanente parce qu'un message temporaire s'efface au survol des actions, et que
+   * l'etendue est le seul controle d'une unite fausse.
+   */
+  QLabel* mesh_info_label_ = nullptr;
+  /** @brief Texte de mesh_info_label_ dans les deux langues, reaffiche au changement de langue */
+  Bilingual mesh_info_text_;
 
   Ui::TPP* ui_;
   ConfigurableTPPPipelineWidget* pipeline_widget_;
@@ -449,8 +727,6 @@ protected:
   vtkSmartPointer<vtkPolyDataMapper2D> outline_mapper_;
   vtkSmartPointer<vtkActor2D> outline_actor_;
 
-  /** @brief Toolbar selector for the active selection tool */
-  QComboBox* tool_combo_box_ = nullptr;
   /** @brief Spin box controlling the flatness (max angle between adjacent faces, in degrees) */
   QDoubleSpinBox* flatness_angle_spin_box_ = nullptr;
   /** @brief Spin box controlling the brush diameter (mm), measured along the surface */
@@ -459,12 +735,6 @@ protected:
   QDoubleSpinBox* tool_radius_spin_box_ = nullptr;
   /** @brief Check box enabling/disabling the tool-radius erosion */
   QCheckBox* tool_radius_enabled_check_box_ = nullptr;
-  /** @brief One entry per added surface; the item data carries the surface id */
-  QListWidget* surface_list_ = nullptr;
-  /** @brief Toolbar button validating the work selection into the list */
-  QPushButton* add_surface_button_ = nullptr;
-  /** @brief Button under the list removing the selected surface */
-  QPushButton* remove_surface_button_ = nullptr;
   /** @brief Sommets du trace manuel par surface, dans l'ordre de parcours */
   std::map<int, std::vector<Eigen::Vector3d>> surface_traces_;
   /** @brief Vrai pendant un tirage du trace : trace_preview_end_ vaut alors quelque chose */
@@ -473,8 +743,8 @@ protected:
   Eigen::Vector3d trace_preview_end_ = Eigen::Vector3d::Zero();
   /** @brief Espacement des points du trace manuel, en millimetres */
   QDoubleSpinBox* trace_step_spin_box_ = nullptr;
-  /** @brief Bouton a bascule de l'onglet Traitement : le tirage trace sur la surface selectionnee */
-  QPushButton* trace_button_ = nullptr;
+  /** @brief Outil a bascule de l'onglet Traitement : le tirage trace sur la surface selectionnee */
+  QToolButton* trace_button_ = nullptr;
   /** @brief Hauteur de l'approche et du retrait au-dessus du premier et du dernier point, en millimetres */
   QDoubleSpinBox* approach_height_spin_box_ = nullptr;
   /** @brief Points du trace manuel dans la vue */
@@ -485,8 +755,8 @@ protected:
   vtkSmartPointer<vtkActor> disc_actor_;
   /** @brief Cercles du disque le long du trace en cours */
   vtkSmartPointer<vtkActor> trace_disc_actor_;
-  /** @brief Bouton a bascule du dock Trajectoire : le tirage deplace des poses du chemin livre */
-  QPushButton* move_points_button_ = nullptr;
+  /** @brief Outil a bascule de l'onglet Traitement : le tirage deplace des poses du chemin livre */
+  QToolButton* move_points_button_ = nullptr;
   /** @brief Pose de la generation saisie par le tirage en cours */
   PoseMove grabbed_;
   /** @brief Vrai pendant un tirage qui deplace une pose */
@@ -495,10 +765,8 @@ protected:
   Eigen::Vector3d grab_origin_ = Eigen::Vector3d::Zero();
   /** @brief Passe de la generation deplacee telle qu'elle etait a la saisie, pour y lire l'approche et le retrait */
   ToolPathSegment grab_segment_before_;
-  /** @brief Bouton du dock Trajectoire qui clot le deplacement de points et confirme la disposition */
+  /** @brief Bouton de la page Deplacer des points qui clot le deplacement et confirme la disposition */
   QPushButton* validate_layout_button_ = nullptr;
-  /** @brief Bouton du dock Trajectoire qui charge un chemin deja enregistre */
-  QPushButton* load_tool_paths_button_ = nullptr;
   /** @brief Marque de la pose saisie */
   vtkSmartPointer<vtkActor> grab_actor_;
   /** @brief Cercle du disque de la pose saisie, qui suit le tirage */
@@ -507,6 +775,81 @@ protected:
   PathEditWidget* path_edit_ = nullptr;
   /** @brief The submeshes planned in the last plan() call (one per selected region), for display/save */
   std::vector<pcl::PolygonMesh> fragments_;
+
+  /** @brief Langue de l'interface et liaisons des textes, lue dans QSettings a la construction */
+  Translator translator_{ Translator::savedLanguage() };
+  /** @brief Barre du process en haut de la fenetre */
+  ProcessRibbon* ribbon_ = nullptr;
+  /** @brief Groupe exclusif des outils qui prennent la souris */
+  QButtonGroup* mode_group_ = nullptr;
+  /** @brief Outil Region de l'onglet 2 */
+  QToolButton* region_button_ = nullptr;
+  /** @brief Outil Brosse de l'onglet 2 */
+  QToolButton* brush_button_ = nullptr;
+  /** @brief Outil Polygone de l'onglet 2 */
+  QToolButton* polygon_button_ = nullptr;
+  /** @brief Outil Gomme de l'onglet 2 */
+  QToolButton* eraser_button_ = nullptr;
+  /** @brief Action d'entree de chaque onglet, par rang : la page d'options montree sans rien lancer */
+  std::vector<std::function<void()>> tab_entries_;
+  /** @brief Arbre du dock de gauche */
+  QTreeWidget* tree_ = nullptr;
+  /** @brief Racine de l'arbre : nom du maillage charge */
+  QTreeWidgetItem* piece_item_ = nullptr;
+  /** @brief Racine de l'arbre : une surface validee par enfant, son trace en petit-enfant */
+  QTreeWidgetItem* surfaces_item_ = nullptr;
+  /** @brief Racine de l'arbre : une passe du chemin livre par enfant */
+  QTreeWidgetItem* passes_item_ = nullptr;
+  /** @brief Surfaces decochees dans l'arbre : dessinees en blanc, toujours generees */
+  std::set<int> hidden_surfaces_;
+  /** @brief Pages du panneau des options */
+  QStackedWidget* options_pages_ = nullptr;
+  /** @brief Rang de chaque page dans options_pages_, par identifiant */
+  std::map<std::string, int> option_page_index_;
+  /** @brief Titre du panneau des options */
+  QLabel* options_title_ = nullptr;
+  /** @brief Aide du panneau des options */
+  QLabel* options_help_ = nullptr;
+  /** @brief Titre affiche, dans les deux langues, pour le reafficher au changement de langue */
+  Bilingual options_title_text_;
+  /** @brief Aide affichee, dans les deux langues */
+  Bilingual options_help_text_;
+  /** @brief Finesse STEP du projet, sur la page Ouvrir */
+  QLabel* open_info_label_ = nullptr;
+
+  /** @brief Case de la page Calques : disques pleins, sinon seulement leur bord */
+  QCheckBox* filled_discs_check_box_ = nullptr;
+  /** @brief Surelevation des disques dessines le long de l'axe outil, en millimetres */
+  QDoubleSpinBox* disc_lift_spin_box_ = nullptr;
+  /** @brief Case de la page Calques : peindre les faces non couvertes */
+  QCheckBox* show_uncovered_check_box_ = nullptr;
+  /** @brief Couche des zones de la surface que le disque n'atteint pas, au-dessus de la piece */
+  vtkSmartPointer<vtkActor> uncovered_actor_;
+  /** @brief Vrai des qu'une mesure de couverture a ete gardee */
+  bool coverage_valid_ = false;
+  /** @brief Passes de la derniere mesure de couverture */
+  ToolPath coverage_passes_;
+  /** @brief Faces de la derniere mesure de couverture */
+  std::vector<int> coverage_faces_;
+  /** @brief Rayon de la derniere mesure de couverture, en metres */
+  double coverage_radius_ = 0.0;
+  /** @brief Poses ecartees a chaque bout des passes dans la derniere mesure */
+  std::size_t coverage_skirt_ = 0;
+  /** @brief Etiquette permanente de la barre d'etat : taux de couverture */
+  QLabel* coverage_label_ = nullptr;
+  /** @brief Texte de coverage_label_ dans les deux langues */
+  Bilingual coverage_text_;
+
+  /** @brief Outil a bascule de l'onglet Traitement : les clics choisissent les points a densifier */
+  QToolButton* densify_button_ = nullptr;
+  /** @brief Points de contact choisis pour densifier, zero, un ou deux, dans une meme passe generee */
+  std::vector<PoseMove> densify_ends_;
+  /** @brief Ecart maximal voulu entre deux poses apres densification, en millimetres */
+  QDoubleSpinBox* densify_step_spin_box_ = nullptr;
+  /** @brief Texte des points choisis, sur la page Densifier */
+  QLabel* densify_ends_label_ = nullptr;
+  /** @brief Marques des points choisis dans la vue */
+  vtkSmartPointer<vtkActor> densify_actor_;
 };
 
 }  // namespace noether

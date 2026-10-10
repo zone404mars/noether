@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <noether_gui/widgets/translator.h>
 #include <noether_tpp/core/tool_path_recipe.h>
 
 #include <QWidget>
@@ -108,6 +109,12 @@ public:
    */
   void hideAdvancedControls();
 
+  /**
+   * @brief Lie a la langue de l'interface les textes des controles que ::hideAdvancedControls garde
+   * @param translator Langue de l'interface ; doit vivre plus longtemps que ce widget
+   */
+  void bindTexts(Translator& translator);
+
   /** @brief What forbids delivering the current recipe, one message per fault */
   std::vector<std::string> faults() const;
 
@@ -130,6 +137,15 @@ public:
    * @details Remplace un deplacement anterieur de la meme pose. Voir ::beginPoseMoves.
    */
   void movePose(const PoseMove& move);
+  /** @brief Poses ajoutees par densification, dans l'ordre ou elles l'ont ete */
+  const std::vector<PoseInsertion>& insertions() const { return insertions_; }
+  /**
+   * @brief Ajoute des poses entre des poses voisines de la generation, avec un point d'annulation
+   * @details Une insertion a une place deja densifiee remplace l'ancienne ; une insertion vide
+   * efface seulement ce qui y avait ete ajoute. Les poses ajoutees ne se deplacent pas a la souris :
+   * seules les poses de la generation se saisissent.
+   */
+  void insertPoses(const std::vector<PoseInsertion>& insertions);
 
   /** @brief Called after every change to the recipe */
   std::function<void()> on_changed;
@@ -172,13 +188,16 @@ protected:
   PathRecipe recipe_;
   /** @brief Poses de la generation deplacees a la main */
   std::vector<PoseMove> moves_;
+  /** @brief Poses ajoutees par densification */
+  std::vector<PoseInsertion> insertions_;
   /** @brief The delivered passes, reassembled after every change */
   ToolPath passes_;
-  /** @brief Un etat de la retouche : la recette et les deplacements */
+  /** @brief Un etat de la retouche : la recette, les deplacements et les insertions */
   struct EditState
   {
     PathRecipe recipe;
     std::vector<PoseMove> moves;
+    std::vector<PoseInsertion> insertions;
   };
   /** @brief Etats tels qu'ils etaient avant chaque changement, le plus recent en dernier */
   std::vector<EditState> history_;
@@ -190,6 +209,10 @@ protected:
   /** @brief Reading of what currently forbids delivering the recipe */
   QLabel* fault_label_ = nullptr;
 
+  /** @brief Titre de la liste des passes */
+  QLabel* list_label_ = nullptr;
+  /** @brief Langue des textes calcules, fixee par ::bindTexts ; nulle : textes en francais */
+  const Translator* translator_ = nullptr;
   QPushButton* up_button_ = nullptr;
   QPushButton* down_button_ = nullptr;
   QPushButton* reverse_button_ = nullptr;

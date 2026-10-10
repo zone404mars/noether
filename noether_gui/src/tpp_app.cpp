@@ -14,6 +14,8 @@ int main(int argc, char** argv)
 
   std::string mesh_file;
   std::string config_file;
+  // Finesse de conversion des STEP ; sans elle, un STEP est refuse
+  std::string step_tessellation_file;
 
   po::options_description desc("options");
   // clang-format off
@@ -21,6 +23,7 @@ int main(int argc, char** argv)
       ("help", "produce help message")
       ("mesh,m", po::value<std::string>(&mesh_file), "Input mesh file")
       ("config,c", po::value<std::string>(&config_file), "Tool path planning pipeline configuration file")
+      ("step-tessellation,s", po::value<std::string>(&step_tessellation_file), "STEP to mesh tessellation file")
   ;
   // clang-format on
   po::variables_map vm;
@@ -42,10 +45,19 @@ int main(int argc, char** argv)
   widget.setWindowTitle("Tool Path Planner");
   widget.showMaximized();
 
+  // Avant le maillage : un --mesh en STEP a besoin de sa finesse pour etre converti
+  if (!step_tessellation_file.empty())
+  {
+    widget.setStepTessellationFile(QString::fromStdString(step_tessellation_file));
+  }
   if (!mesh_file.empty())
+  {
     widget.setMeshFile(QString::fromStdString(mesh_file));
+  }
   if (!config_file.empty())
+  {
     widget.configure(QString::fromStdString(config_file));
+  }
 
   return app.exec();
 }

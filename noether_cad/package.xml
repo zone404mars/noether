@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>noether_cad</name>
+  <version>0.16.0</version>
+  <description>
+    Conversion d'un STEP en maillage pour Noether : unite lue dans le fichier, mise en metres,
+    tessellation a finesse imposee, recentrage trace et table des faces exactes.
+  </description>
+
+  <maintainer email="tristan@zone404mars.fr">Tristan</maintainer>
+
+  <license>Apache 2.0</license>
+
+  <build_depend>ros_industrial_cmake_boilerplate</build_depend>
+  <depend>eigen</depend>
+  <test_depend>yaml-cpp</test_depend>
+
+  <!-- OpenCASCADE n'a pas de cle rosdep : il est trouve par CMake via son
+       OpenCASCADEConfig.cmake, installe par les paquets libocct-*-dev. -->
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>

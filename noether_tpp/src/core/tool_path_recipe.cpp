@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 
 namespace noether
@@ -32,11 +33,11 @@ namespace
 {
 /**
  * @brief Schema version this code writes.
- * @details La version 1 n'avait pas de deplacements de poses ; elle se lit encore, sans
- * deplacement. Une version plus recente que celle-ci est refusee : elle porterait des champs
- * que cette version ignorerait en silence.
+ * @details La version 1 n'avait pas de deplacements de poses, la version 2 pas d'insertions ;
+ * elles se lisent encore, sans ce qui leur manque. Une version plus recente que celle-ci est
+ * refusee : elle porterait des champs que cette version ignorerait en silence.
  */
-const int kSchemaVersion = 2;
+const int kSchemaVersion = 3;
 /** @brief Plus ancienne version encore lue */
 const int kOldestReadableSchemaVersion = 1;
 
@@ -154,6 +155,24 @@ Eigen::Vector3d readPosition(const YAML::Node& node, const std::string& what)
     throw std::runtime_error("Recipe field '" + what + "' must hold exactly three numbers.");
   }
   return Eigen::Vector3d(node[0].as<double>(), node[1].as<double>(), node[2].as<double>());
+}
+
+/// @brief Lit une pose complete : cles position et quaternion (x, y, z, w).
+/// @param node Table portant les deux cles
+/// @param what Nom du champ, cite dans le message de refus
+/// @throws std::runtime_error si une cle manque ou n'a pas le bon nombre de valeurs
+Eigen::Isometry3d readPose(const YAML::Node& node, const std::string& what)
+{
+  Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+  pose.translation() = readPosition(node["position"], what + ".position");
+  const YAML::Node q = node["quaternion"];
+  if (!q.IsSequence() || q.size() != 4)
+  {
+    throw std::runtime_error("Recipe field '" + what + ".quaternion' must hold exactly four numbers (x, y, z, w).");
+  }
+  pose.linear() =
+      Eigen::Quaterniond(q[3].as<double>(), q[0].as<double>(), q[1].as<double>(), q[2].as<double>()).toRotationMatrix();
+  return pose;
 }
 
 /// @brief Writes one fingerprint, on a single line.
@@ -481,17 +500,52 @@ std::vector<PoseMove> readMoves(const YAML::Node& root)
     PoseMove move;
     move.segment = node[m]["segment"].as<std::size_t>();
     move.index = node[m]["index"].as<std::size_t>();
-    move.pose.translation() = readPosition(node[m]["position"], "moves.position");
-    const YAML::Node q = node[m]["quaternion"];
-    if (!q.IsSequence() || q.size() != 4)
-    {
-      throw std::runtime_error("Recipe field 'moves.quaternion' must hold exactly four numbers (x, y, z, w).");
-    }
-    move.pose.linear() =
-        Eigen::Quaterniond(q[3].as<double>(), q[0].as<double>(), q[1].as<double>(), q[2].as<double>()).toRotationMatrix();
+    move.pose = readPose(node[m], "moves");
     moves.push_back(move);
   }
   return moves;
+}
+
+/// @brief Lit une insertion : passe, rang de la pose qui precede, poses ajoutees.
+/// @param node Table de l'insertion
+/// @throws std::runtime_error si les poses ne forment pas une sequence
+PoseInsertion readInsertion(const YAML::Node& node)
+{
+  PoseInsertion insertion;
+  insertion.segment = node["segment"].as<std::size_t>();
+  insertion.after = node["after"].as<std::size_t>();
+  const YAML::Node poses = node["poses"];
+  if (!poses.IsSequence())
+  {
+    throw std::runtime_error("Recipe field 'insertions.poses' is not a sequence.");
+  }
+  for (std::size_t p = 0; p < poses.size(); ++p)
+  {
+    insertion.poses.push_back(readPose(poses[p], "insertions.poses"));
+  }
+  return insertion;
+}
+
+/// @brief Lit les poses ajoutees par densification ; absent avant la version 3.
+/// @param root Racine du fichier
+/// @throws std::runtime_error si le champ existe mais n'est pas une sequence
+std::vector<PoseInsertion> readInsertions(const YAML::Node& root)
+{
+  std::vector<PoseInsertion> insertions;
+  const YAML::Node node = root["insertions"];
+  if (!node)
+  {
+    return insertions;
+  }
+  if (!node.IsSequence())
+  {
+    throw std::runtime_error("Recipe field 'insertions' is not a sequence.");
+  }
+  for (std::size_t i = 0; i < node.size(); ++i)
+  {
+    insertions.push_back(readInsertion(node[i]));
+  }
+  return insertions;
 }
 }  // namespace
 
@@ -515,6 +569,7 @@ RecipeFile readRecipeFile(const std::string& file)
     content.source = readFingerprints(root);
     content.recipe = readPasses(root);
     content.moves = readMoves(root);
+    content.insertions = readInsertions(root);
     return content;
   }
   catch (const std::exception& ex)
@@ -525,21 +580,66 @@ RecipeFile readRecipeFile(const std::string& file)
 
 namespace
 {
+/// @brief Ecrit les cles position et quaternion (x, y, z, w) d'une pose dans une table ouverte.
+/// @param out Emetteur
+/// @param pose Pose a ecrire
+void emitPoseKeys(YAML::Emitter& out, const Eigen::Isometry3d& pose)
+{
+  const Eigen::Quaterniond q(pose.linear());
+  const Eigen::Vector3d& t = pose.translation();
+  out << YAML::Key << "position" << YAML::Value << YAML::Flow << YAML::BeginSeq << t.x() << t.y() << t.z()
+      << YAML::EndSeq;
+  out << YAML::Key << "quaternion" << YAML::Value << YAML::Flow << YAML::BeginSeq << q.x() << q.y() << q.z() << q.w()
+      << YAML::EndSeq;
+}
+
 /// @brief Ecrit un deplacement de pose sur une ligne : passe, rang, position, quaternion (x, y, z, w).
 /// @param out Emetteur
 /// @param move Deplacement a ecrire
 void emitMove(YAML::Emitter& out, const PoseMove& move)
 {
-  const Eigen::Quaterniond q(move.pose.linear());
-  const Eigen::Vector3d& t = move.pose.translation();
   out << YAML::Flow << YAML::BeginMap;
   out << YAML::Key << "segment" << YAML::Value << move.segment;
   out << YAML::Key << "index" << YAML::Value << move.index;
-  out << YAML::Key << "position" << YAML::Value << YAML::Flow << YAML::BeginSeq << t.x() << t.y() << t.z()
-      << YAML::EndSeq;
-  out << YAML::Key << "quaternion" << YAML::Value << YAML::Flow << YAML::BeginSeq << q.x() << q.y() << q.z() << q.w()
-      << YAML::EndSeq;
+  emitPoseKeys(out, move.pose);
   out << YAML::EndMap;
+}
+
+/// @brief Ecrit une insertion : passe, rang de la pose qui precede, puis une pose par ligne.
+/// @param out Emetteur
+/// @param insertion Insertion a ecrire
+void emitInsertion(YAML::Emitter& out, const PoseInsertion& insertion)
+{
+  out << YAML::BeginMap;
+  out << YAML::Key << "segment" << YAML::Value << insertion.segment;
+  out << YAML::Key << "after" << YAML::Value << insertion.after;
+  out << YAML::Key << "poses" << YAML::Value << YAML::BeginSeq;
+  for (const Eigen::Isometry3d& pose : insertion.poses)
+  {
+    out << YAML::Flow << YAML::BeginMap;
+    emitPoseKeys(out, pose);
+    out << YAML::EndMap;
+  }
+  out << YAML::EndSeq << YAML::EndMap;
+}
+
+/// @brief Ecrit les retouches faites a la main : poses deplacees, puis poses ajoutees.
+/// @param out Emetteur, dans la table racine
+/// @param content Recette dont les retouches sont ecrites
+void emitHandEdits(YAML::Emitter& out, const RecipeFile& content)
+{
+  out << YAML::Key << "moves" << YAML::Value << YAML::BeginSeq;
+  for (std::size_t m = 0; m < content.moves.size(); ++m)
+  {
+    emitMove(out, content.moves[m]);
+  }
+  out << YAML::EndSeq;
+  out << YAML::Key << "insertions" << YAML::Value << YAML::BeginSeq;
+  for (const PoseInsertion& insertion : content.insertions)
+  {
+    emitInsertion(out, insertion);
+  }
+  out << YAML::EndSeq;
 }
 
 /// @brief Writes a whole recipe into an emitter.
@@ -562,12 +662,8 @@ void emitRecipe(YAML::Emitter& out, const RecipeFile& content)
     emitPass(out, content.recipe[p]);
   }
   out << YAML::EndSeq;
-  out << YAML::Key << "moves" << YAML::Value << YAML::BeginSeq;
-  for (std::size_t m = 0; m < content.moves.size(); ++m)
-  {
-    emitMove(out, content.moves[m]);
-  }
-  out << YAML::EndSeq << YAML::EndMap;
+  emitHandEdits(out, content);
+  out << YAML::EndMap;
 }
 
 }  // namespace
@@ -584,6 +680,29 @@ std::vector<ToolPathSegment> applyPoseMoves(const std::vector<ToolPathSegment>& 
     }
   }
   return moved;
+}
+
+std::vector<ToolPathSegment> applyPoseInsertions(const std::vector<ToolPathSegment>& generated,
+                                                 const std::vector<PoseInsertion>& insertions)
+{
+  // Une seule insertion par place, la derniere ; les rangs restent ceux de la generation
+  std::map<std::pair<std::size_t, std::size_t>, const PoseInsertion*> by_place;
+  for (const PoseInsertion& insertion : insertions)
+  {
+    if (insertion.segment < generated.size() && insertion.after + 1 < generated[insertion.segment].size())
+    {
+      by_place[{ insertion.segment, insertion.after }] = &insertion;
+    }
+  }
+  std::vector<ToolPathSegment> result = generated;
+  // Parcours a rebours : une insertion ne décale pas les rangs de celles qui la precedent
+  for (auto it = by_place.rbegin(); it != by_place.rend(); ++it)
+  {
+    ToolPathSegment& pass = result[it->first.first];
+    const auto position = pass.begin() + static_cast<std::ptrdiff_t>(it->first.second + 1);
+    pass.insert(position, it->second->poses.begin(), it->second->poses.end());
+  }
+  return result;
 }
 
 bool locatePose(const std::vector<ToolPathSegment>& generated,

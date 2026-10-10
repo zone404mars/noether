@@ -30,7 +30,9 @@ RUN --mount=type=bind,target=${WORKSPACE_DIR}/src/noether \
   && rosdep install \
     --from-paths ${WORKSPACE_DIR}/src \
     -iry \
-    --skip-keys libvtk
+    --skip-keys libvtk \
+  # noether_cad : OpenCASCADE n'a pas de cle rosdep pour les Ubuntu recents
+  && apt install -y -qq libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev libocct-data-exchange-dev
 
 # Build the repository
 # Bind mount the source directory so as not to unnecessarily copy source code into the docker image

@@ -88,6 +88,23 @@ struct PoseMove
   Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
 };
 
+/**
+ * @brief Poses ajoutees par densification entre deux poses voisines d'une passe de la generation.
+ * @details Les poses sont enregistrees completes, position et orientation, telles qu'elles ont
+ * ete posees sur la piece : elles ne suivent pas un deplacement ulterieur de leurs voisines.
+ * Elles sont reperees par le rang de la pose qui les precede dans la generation, qui ne bouge
+ * pas quand d'autres poses sont ajoutees ailleurs.
+ */
+struct PoseInsertion
+{
+  /** @brief Passe de la generation, aplatie */
+  std::size_t segment = 0;
+  /** @brief Rang, dans la generation, de la pose apres laquelle les poses s'inserent */
+  std::size_t after = 0;
+  /** @brief Poses inserees, dans le sens de parcours de la generation */
+  ToolPathSegment poses;
+};
+
 struct RecipeFile
 {
   /** @brief What every delivered pass takes from the generation */
@@ -96,6 +113,8 @@ struct RecipeFile
   std::vector<SegmentFingerprint> source;
   /** @brief Poses deplacees a la main, appliquees a la generation avant la recette */
   std::vector<PoseMove> moves;
+  /** @brief Poses ajoutees par densification, appliquees apres les deplacements */
+  std::vector<PoseInsertion> insertions;
 };
 
 /**
@@ -170,6 +189,19 @@ ToolPath assemblePasses(const std::vector<ToolPathSegment>& generated, const Pat
  */
 std::vector<ToolPathSegment> applyPoseMoves(const std::vector<ToolPathSegment>& generated,
                                             const std::vector<PoseMove>& moves);
+
+/**
+ * @brief La generation avec les poses ajoutees par densification.
+ * @details Une insertion qui designe une passe inexistante, ou une pose sans suivante dans sa
+ * passe, est ignoree : la generation a pu changer depuis. Pour une meme place, la derniere
+ * insertion gagne. Les rangs des insertions sont ceux de la generation, avant tout ajout.
+ * Une insertion sans pose ne fait rien.
+ * @param generated Passes generees, aplaties, deja deplacees si des deplacements existent
+ * @param insertions Insertions a appliquer
+ * @return Les passes, chacune avec ses poses ajoutees a leur place
+ */
+std::vector<ToolPathSegment> applyPoseInsertions(const std::vector<ToolPathSegment>& generated,
+                                                 const std::vector<PoseInsertion>& insertions);
 
 /**
  * @brief Retrouve, dans la generation, la pose la plus proche d'une position.

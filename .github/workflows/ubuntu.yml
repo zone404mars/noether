@@ -43,7 +43,7 @@ jobs:
           ccache-prefix: ${{ matrix.distro }}
           add-ros-ppa: true
           vcs-file: dependencies.repos
-          before-script: 'apt install -y -qq clang-tidy'
+          before-script: 'apt install -y -qq clang-tidy libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev libocct-data-exchange-dev'
           rosdep-install-args: '-iry --skip-keys libvtk'
           target-path: target_ws/src
           target-args: --cmake-args -DCMAKE_BUILD_TYPE=Debug -DNOETHER_ENABLE_TESTING=ON

@@ -1,5 +1,21 @@
 <RCC>
     <qresource prefix="/">
         <file>icons/icon.jpg</file>
+        <file>icons/open.svg</file>
+        <file>icons/load_path.svg</file>
+        <file>icons/region.svg</file>
+        <file>icons/brush.svg</file>
+        <file>icons/polygon.svg</file>
+        <file>icons/eraser.svg</file>
+        <file>icons/add_surface.svg</file>
+        <file>icons/trace.svg</file>
+        <file>icons/generate.svg</file>
+        <file>icons/move_points.svg</file>
+        <file>icons/densify.svg</file>
+        <file>icons/order.svg</file>
+        <file>icons/export.svg</file>
+        <file>icons/layers.svg</file>
+        <file>icons/views.svg</file>
+        <file>icons/language.svg</file>
     </qresource>
 </RCC>

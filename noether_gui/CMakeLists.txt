@@ -14,6 +14,7 @@ find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(boost_plugin_loader REQUIRED)
 find_package(noether_tpp REQUIRED)
+find_package(noether_cad REQUIRED)
 find_package(PCL REQUIRED COMPONENTS io surface)
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
 find_package(yaml-cpp REQUIRED)
@@ -36,9 +37,15 @@ add_library(
   src/widgets/tpp_pipeline_widget.cpp
   src/widgets/configurable_tpp_pipeline_widget.cpp
   src/widgets/tpp_widget.cpp
+  src/widgets/tpp_widget_layout.cpp
+  src/widgets/tpp_widget_coverage.cpp
+  src/widgets/tpp_widget_densify.cpp
+  src/widgets/translator.cpp
+  src/widgets/process_ribbon.cpp
   src/widgets/path_edit_widget.cpp
   src/widgets/outline_tool.cpp
   src/widgets/trace_tool.cpp
+  src/widgets/step_import.cpp
   # Tool Path Planners
   # Raster Planner
   src/widgets/tool_path_planners/raster/raster_planner_widget.cpp
@@ -95,6 +102,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE "$<BUILD_INTERFACE:${CMAKE_CU
 target_link_libraries(
   ${PROJECT_NAME}
   PUBLIC noether::noether_tpp
+         noether::noether_cad
          Qt5::Widgets
          ${PCL_LIBRARIES}
          boost_plugin_loader::boost_plugin_loader
@@ -151,6 +159,7 @@ configure_package(
     "Boost REQUIRED COMPONENTS program_options"
     boost_plugin_loader
     noether_tpp
+    noether_cad
     "PCL REQUIRED COMPONENTS io surface"
     "Qt5 REQUIRED COMPONENTS Widgets"
     yaml-cpp
