@@ -152,20 +152,13 @@ public:
   void loadToolPaths(const QString& file);
 
   /**
-   * @brief Saves the tool paths to a YAML file, and the retouching recipe beside it
-   * @details What is written is the *retouched* path, the one the Trajectory dock shows. The
-   * recipe that turns the generation into it is written to a sibling file, so the delivered path
-   * stays a derived artefact rather than a hand edit nobody can replay. See ::editsFileName.
-   * @param file Destination of the tool path
+   * @brief Enregistre le chemin livre dans un fichier YAML
+   * @details Ce qui est ecrit est le chemin retouche, celui que montre le dock Trajectoire. La
+   * recette des retouches n'est pas ecrite : l'IHM ne la relit pas et le trace qui la rendrait
+   * rejouable n'est pas enregistre.
+   * @param file Destination du chemin
    */
   void saveToolPaths(const QString& file);
-
-  /**
-   * @brief Name of the recipe file that belongs beside a tool path file
-   * @details `<stem>.edits.yaml`, so the pairing survives whatever name the operator saves under.
-   * @param tool_path_file Destination of the tool path
-   */
-  static QString editsFileName(const QString& tool_path_file);
 
   // Visibility controls
   void showOriginalMesh(const bool);
@@ -212,8 +205,6 @@ protected:
    * @return True when the retouching may be written out
    */
   bool reportRetouchFaults();
-  /** @brief Writes the retouching recipe beside the tool path file just written */
-  void savePathEdits(const QString& tool_path_file);
   void render();
 
   /**

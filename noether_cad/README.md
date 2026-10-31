@@ -1,5 +1,7 @@
 # noether_cad
 
+> La spécification du fork est `SPECIFICATIONS.md`, à la racine du dépôt. Ce README est le mode d'emploi détaillé ; en cas de désaccord, la spécification fait foi.
+
 Conversion d'un STEP en maillage pour Noether.
 
 Le paquet lit le **STEP d'une piece** et en tire un maillage **en metres**, dans un

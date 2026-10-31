@@ -1,5 +1,7 @@
 # noether_gui
 
+> La spécification du fork est `SPECIFICATIONS.md`, à la racine du dépôt. Ce README est le mode d'emploi détaillé ; en cas de désaccord, la spécification fait foi.
+
 Interface de préparation des chemins d'outil : on ouvre une pièce, on y choisit des
 surfaces, on trace un chemin à la main sur chacune, on génère les passes, on les retouche,
 puis on exporte le chemin.
@@ -147,8 +149,8 @@ ajoutés ; un écart déjà sous le nouveau pas perd ses points ajoutés.
 Densifier demande la pièce ouverte : un chemin repris sans sa pièce est refusé. Pendant
 Densifier, le glisser tourne la vue.
 
-Les points ajoutés sont enregistrés tels quels dans la retouche (fichier de version 3, champ
-`insertions`). Ils ne suivent pas un déplacement ultérieur de leurs voisins, et ne se
+Les points ajoutés sont gardés tels quels dans la retouche (champ `insertions` de la
+recette). Exporter écrit le chemin avec eux ; la recette elle-même n'est pas exportée. Ils ne suivent pas un déplacement ultérieur de leurs voisins, et ne se
 saisissent pas avec Déplacer des points : pour les changer, il faut redensifier.
 
 ---

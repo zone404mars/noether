@@ -2398,12 +2398,6 @@ void TPPWidget::clearPlannedPaths()
   refreshPassItems();
 }
 
-QString TPPWidget::editsFileName(const QString& tool_path_file)
-{
-  const QFileInfo info(tool_path_file);
-  return info.dir().filePath(info.completeBaseName() + ".edits.yaml");
-}
-
 void TPPWidget::saveToolPaths(const QString& file)
 {
   if (!reportRetouchFaults())
@@ -2423,8 +2417,6 @@ void TPPWidget::saveToolPaths(const QString& file)
 
   // Write all tool paths at once using YAML serialization
   out << YAML::Node(editedToolPaths());
-
-  savePathEdits(file);
 }
 
 bool TPPWidget::reportRetouchFaults()
@@ -2454,31 +2446,6 @@ bool TPPWidget::reportRetouchFaults()
   return false;
 }
 
-void TPPWidget::savePathEdits(const QString& tool_path_file)
-{
-  // La recette part a cote du chemin de poses : celui-ci reste une donnee derivee, qui se
-  // regenere, et ce que le mainteneur a retouche a la main reste lisible et rejouable.
-  RecipeFile content;
-  content.recipe = path_edit_->recipe();
-  content.source = fingerprintSegments(path_edit_->generated());
-  content.moves = path_edit_->moves();
-  content.insertions = path_edit_->insertions();
-
-  const QString file = editsFileName(tool_path_file);
-  try
-  {
-    writeRecipeFile(file.toStdString(), content);
-  }
-  catch (const std::exception& ex)
-  {
-    QMessageBox::warning(this,
-                         say("Retouche non enregistrée", "Retouching not saved"),
-                         say("Le chemin est écrit, mais la retouche n'a pas pu l'être dans %1 : %2",
-                             "The path is written, but the retouching could not be written to %1: %2")
-                             .arg(file)
-                             .arg(QString::fromStdString(ex.what())));
-  }
-}
 void TPPWidget::loadToolPaths(const QString& file)
 {
   std::vector<ToolPaths> loaded;
