@@ -4,8 +4,8 @@
 **Paquets :** `noether_cad` (bibliothèque C++ et ligne de commande ; aucun en-tête ROS dans le code), `noether_gui` (application Qt/VTK `noether_gui_app`), `noether_tpp` (bibliothèque de planification de chemins d'outil)
 **Stack :** Noether 0.16.0 (ROS-Industrial), OpenCASCADE, VTK, PCL, Qt 5, yaml-cpp, Eigen
 **Langue spec :** français | **Langue code :** anglais
-**Versions :** V1 (existant), V1.1 (en conception), puis V1.2… (ajouts à venir, chacun dans sa section)
-**Statut :** V1 implémentée et testée, branche `z404/open-step`, commit `2dd5dfe` ; V1.1 en conception, non implémentée
+**Versions :** V1 (existant), V1.1 (implémentée), puis V1.2… (ajouts à venir, chacun dans sa section)
+**Statut :** V1 implémentée et testée, branche `z404/open-step`, commit `2dd5dfe` ; V1.1 implémentée et testée le 01/11/2026 (§25)
 
 ---
 
@@ -47,7 +47,7 @@ ce que le code ne tranche pas, sont dans l'annexe B.
   - [14. Structure des paquets et intégration](#14-structure-des-paquets-et-intégration)
   - [15. Critères d'acceptation](#15-critères-dacceptation)
   - [16. Résumé V1 / suite](#16-résumé-v1--suite)
-- [V1.1 : en conception](#v11--en-conception)
+- [V1.1](#v11)
   - [17. Vocabulaire ajouté](#17-vocabulaire-ajouté)
   - [18. Le chemin livré devient une liste de poses éditée](#18-le-chemin-livré-devient-une-liste-de-poses-éditée)
   - [19. Outil « Éditer les points »](#19-outil--éditer-les-points-)
@@ -216,17 +216,17 @@ d'origine sont cachés ; leurs actions restent dans les menus. Schéma et classe
 | --- | --- | --- |
 | 1 Fichier | Ouvrir une pièce, Reprendre un chemin | formats acceptés, finesse STEP |
 | 2 Sélection | Région, Brosse, Polygone, Gomme, Valider la surface | angle de planéité, diamètre de la brosse |
-| 3 Traitement | Tracé manuel, Générer, Déplacer des points, Densifier | pas du tracé, hauteur d'approche, rayon de l'outil, pas cible de densification |
-| 4 Trajectoire | Ordre des passes, Exporter | liste des passes : monter, descendre, supprimer, annuler |
-| Affichage | Calques, Vues standard, Langue | disques pleins, surélévation, zones non couvertes ; vues face, dessus, côté, iso |
+| 3 Traitement | Tracé manuel, Générer, ~~Déplacer des points, Densifier~~ Éditer les points (V1.1, §19) | pas du tracé, hauteur d'approche, rayon de l'outil, ~~pas cible de densification~~ sélection de points et Densifier (§19.5, §21) |
+| 4 Trajectoire | Ordre des passes, Exporter | liste des passes : monter, descendre, supprimer, annuler ; rétablir (V1.1, §18) |
+| Affichage | Calques, Vues standard, Langue | disques pleins, surélévation, zones non couvertes ; vues face, dessus, côté, iso ; cube de navigation dans la vue (V1.1, §22) |
 
 Règles :
 - Les outils qui prennent la souris dans la vue s'excluent : en choisir un relâche le
   précédent.
-- Un outil de sélection est toujours armé. Tracé manuel, Déplacer des points et Densifier
-  sont temporaires : ils rendent la souris au dernier outil de sélection quand on change
-  d'outil, quand on valide la disposition, ou quand on entre dans les onglets Fichier,
-  Trajectoire ou Affichage.
+- Un outil de sélection est toujours armé. Tracé manuel, ~~Déplacer des points et Densifier~~
+  Éditer les points (V1.1, §19) sont temporaires : ils rendent la souris au dernier outil
+  de sélection quand on change d'outil, ~~quand on valide la disposition,~~ ou quand on
+  entre dans les onglets Fichier, Trajectoire ou Affichage.
 - Changer d'onglet ne lance aucune action, sauf : l'onglet Sélection reprend le dernier
   outil de sélection, l'onglet Traitement active le Tracé manuel.
 
@@ -306,44 +306,56 @@ retire le dernier sommet, Échap efface le tracé. Les mêmes actions existent e
 Une surface donne une passe. Une surface sans tracé ne donne rien et la liste des
 surfaces concernées est affichée. Une sélection en cours non validée bloque la génération.
 
-Si le chemin porte une retouche, une nouvelle génération demande confirmation : elle la
-perd, parce qu'elle renumérote les passes. Si la génération échoue en cours de route, tout
+~~Si le chemin porte une retouche, une nouvelle génération demande confirmation : elle la
+perd, parce qu'elle renumérote les passes.~~ V1.1 : confirmation quand le chemin est
+modifié (§18). Si la génération échoue en cours de route, tout
 le résultat partiel est effacé, pour ne pas afficher ni exporter un chemin amputé.
 
 ## 9. Retouche du chemin
 
 ### 9.1 Déplacer des points
 
-Le glisser d'une pose de contact la déplace sur la pièce : z suit la normale de la face
+**Remplacé en V1.1 par l'outil Éditer les points (§19).**
+
+~~Le glisser d'une pose de contact la déplace sur la pièce : z suit la normale de la face
 sous le curseur, x garde son sens de marche rendu orthogonal. Si la pose déplacée est la
 première ou la dernière de contact, l'approche ou le retrait la suit, à la même place dans
 son repère. Un clic à plus de 50 mm de toute pose ne saisit rien (`kGrabToleranceM`).
-L'approche et le retrait ne se saisissent pas. **Annuler** défait un glisser entier.
+L'approche et le retrait ne se saisissent pas. **Annuler** défait un glisser entier.~~
 
 ### 9.2 Densifier
 
-1. Choisir deux poses de contact A et B de la même passe (clic à moins de 50 mm).
-2. Régler le pas cible.
-3. Cliquer **Densifier**.
+**Remplacé en V1.1 par Densifier par pas ou par nombre (§21).**
 
-Chaque écart entre deux poses voisines, de A à B, plus long que le pas cible, reçoit des
-poses régulièrement réparties, projetées sur la face la plus proche du maillage entier et
-orientées comme celles du tracé. Les poses existantes ne bougent pas. Redensifier le même
-écart remplace les poses ajoutées. Densifier demande la pièce ouverte : un chemin repris
-sans sa pièce est refusé. Les poses ajoutées ne suivent pas un déplacement ultérieur de
-leurs voisines, et ne se saisissent pas avec Déplacer des points.
+1. ~~Choisir deux poses de contact A et B de la même passe (clic à moins de 50 mm).~~
+2. ~~Régler le pas cible.~~
+3. ~~Cliquer **Densifier**.~~
+
+~~Chaque écart entre deux poses voisines, de A à B, plus long que le pas cible, reçoit des
+poses régulièrement réparties, posées sur la surface de la passe selon §21.1 (en place
+depuis le 01/11/2026). Les poses existantes ne bougent pas. Redensifier le même écart
+remplace les poses ajoutées. Densifier demande la pièce ouverte, et une passe dont la
+surface est connue : un chemin repris est refusé, même avec sa pièce (N23). Un écart sans
+triangle valable est sauté, et la barre d'état donne le nombre d'écarts sautés. Les poses
+ajoutées ne suivent pas un déplacement ultérieur de leurs voisines, et ne se saisissent pas avec Déplacer des points.~~
 
 ### 9.3 Ordre des passes
 
 Onglet Trajectoire : choisir une passe dans la liste, puis monter, descendre, supprimer,
-annuler. **Annuler** défait le dernier changement, une densification comprise.
+annuler. **Annuler** défait le dernier changement, une densification comprise. V1.1 :
+Annuler et Rétablir parcourent une pile de copies du chemin livré (§18).
 
-Les fonctions retourner, souder, scinder, enchaîner et revenir à la génération existent
+~~Les fonctions retourner, souder, scinder, enchaîner et revenir à la génération existent
 dans `PathEditWidget` et `tool_path_recipe`, mais leurs boutons sont cachés en V1
-(`hideAdvancedControls`). Une soudure retire une pose de chaque côté du raccord, l'approche
-et le retrait, pour que l'outil reste en contact.
+(`hideAdvancedControls`).~~ V1.1 : ces fonctions ne restent que dans `tool_path_recipe`
+(`noether_tpp`), avec leurs tests ; `PathEditWidget` ne les porte plus (N8). Dans
+`tool_path_recipe`, une soudure retire une pose de chaque côté du raccord, l'approche et le
+retrait, pour que l'outil reste en contact.
 
 ### 9.4 Recette
+
+**Pour l'IHM, remplacée en V1.1 par la liste de poses éditée (§18).** La recette reste dans
+`noether_tpp` avec ses tests.
 
 La retouche s'écrit en recette (`RecipeFile`) :
 - `recipe` : pour chaque passe livrée, la liste des passes générées qu'elle met bout à bout,
@@ -383,7 +395,7 @@ des cercles dessinés. L'approche et le retrait ne comptent pas.
 ### 11.1 `<nom>.yaml` : le chemin livré
 
 Écrit par **Exporter**, refusé si aucune génération n'existe ou si la retouche a un défaut
-(passe de moins de 4 poses, recette incohérente), avec la liste des défauts.
+(passe de moins de 4 poses, ~~recette incohérente~~), avec la liste des défauts.
 
 - Format : la sérialisation YAML de `std::vector<ToolPaths>` de Noether, des listes
   imbriquées. La liste la plus interne est une passe, suite de poses.
@@ -431,10 +443,11 @@ l'opérateur par une boîte de dialogue.
 | IHM, Générer | sélection en cours non validée | refus, message |
 | IHM, Générer | surface sans tracé | les autres sont générées ; liste des surfaces sans tracé |
 | IHM, Générer | exception pendant la génération | résultat partiel effacé, message |
-| IHM, Générer | retouche en cours | confirmation demandée, Non par défaut |
-| IHM, Exporter | aucune génération, ou retouche invalide | export refusé, liste des défauts |
+| IHM, Générer | ~~retouche en cours~~ chemin modifié (V1.1, §18) | confirmation demandée, Non par défaut |
+| IHM, Exporter | aucune génération, ou ~~retouche invalide~~ passe de moins de 4 poses (V1.1, §18) | export refusé, liste des défauts |
 | IHM, Reprendre un chemin | fichier qui ne se lit pas comme un chemin | refus, message nommant le fichier |
-| IHM, Densifier | pièce absente | refus |
+| IHM, Densifier | pièce absente, ou passe sans surface (chemin repris) | ~~refus, message~~ V1.1 : action grisée, bulle d'aide (§23) |
+| IHM, Densifier | écart sans triangle valable, ou aux axes z opposés (§21.1) | écart sauté, nombre d'écarts sautés en barre d'état |
 | `readRecipeFile` | fichier absent, mal formé, version inconnue | `std::runtime_error` qui nomme le fichier |
 | `assemblePasses` | index hors limites, passe utilisée deux fois, entrée vide | `std::runtime_error` |
 
@@ -449,9 +462,12 @@ noether/
 │   └── test/step_reader_utest.cpp
 ├── noether_gui/               IHM, noether_gui_app
 │   ├── src/widgets/           tpp_widget*.cpp, path_edit_widget, process_ribbon,
-│   │                          trace_tool, outline_tool, step_import, translator
+│   │                          trace_tool, pass_surface, outline_tool, step_import, translator ;
+│   │                          V1.1 : edited_path, point_edit, point_picking, view_cube,
+│   │                          tpp_widget_edit_points, tpp_widget_point_actions,
+│   │                          tpp_widget_point_view, tpp_widget_view_cube
 │   ├── resources/icons/       icônes des outils (SVG)
-│   └── test/                  6 exécutables de test
+│   └── test/                  11 exécutables de test
 └── noether_tpp/               planification ; ajouts : core/face_*, core/tool_path_recipe,
                                3 modificateurs, et leurs tests
 ```
@@ -472,7 +488,7 @@ noether_gui_app -s <finesse.yaml> [-m <piece.step|ply|stl>] [-c <pipeline.yaml>]
 
 ## 15. Critères d'acceptation
 
-Tous cochés : le test nommé passe sur `2dd5dfe` plus le retrait de l'export `.edits.yaml` (N10), en Release, le 31/10/2026 : noether_cad 21/21, noether_tpp 131/131, noether_gui 57/57.
+Tous cochés : le test nommé passe sur `2dd5dfe` plus le retrait de l'export `.edits.yaml` (N10), en Release, le 31/10/2026 : noether_cad 21/21, noether_tpp 131/131, noether_gui 57/57. Les critères `PassSurface` (§21.1) passent depuis le 01/11/2026. Avec V1.1, le 01/11/2026 : noether_gui 94/94 ; deux critères de V1 sont barrés, leurs tests ayant disparu avec la recette de l'IHM, et le test d'un troisième est renommé (§26).
 
 ### Conversion STEP
 - [x] STEP en millimètres → sommets en mètres (`StepReader.ConvertsMillimetersToMeters`)
@@ -490,10 +506,14 @@ Tous cochés : le test nommé passe sur `2dd5dfe` plus le retrait de l'export `.
 
 ### Retouche
 - [x] Passe livrée de moins de 4 poses → export refusé (`PathEditWidget.ReportsAPassTooShortToDeliver`)
-- [x] Recette écrite sur une autre génération → refus (`PathEditWidget.RefusesARecipeWrittenOnAnotherGeneration`) ; testé dans la bibliothèque, pas atteignable depuis l'IHM V1 (§11.2)
+- ~~[x] Recette écrite sur une autre génération → refus (`PathEditWidget.RefusesARecipeWrittenOnAnotherGeneration`) ; testé dans la bibliothèque, pas atteignable depuis l'IHM V1 (§11.2)~~ V1.1 : l'IHM n'a plus de recette (§18)
 - [x] Fichier de version 1 ou 2 → lu sans le champ manquant (`PoseMoves.AVersionOneFileReadsWithoutMoves`, `PoseInsertions.AVersionTwoFileReadsWithoutInsertions`)
-- [x] Annuler après un glisser → tout le glisser est défait (`PathEditWidget.MovesAPoseAndUndoesTheWholeDragAtOnce`)
-- [x] Redensifier le même écart → les poses ajoutées sont remplacées (`PathEditWidget.ADensifiedPlaceIsReplacedAndANewGenerationForgetsIt`)
+- [x] Annuler après un glisser → tout le glisser est défait (~~`PathEditWidget.MovesAPoseAndUndoesTheWholeDragAtOnce`~~ V1.1 : `PathEditWidget.ADragIsUndoneAtOnce`)
+- ~~[x] Redensifier le même écart → les poses ajoutées sont remplacées (`PathEditWidget.ADensifiedPlaceIsReplacedAndANewGenerationForgetsIt`)~~ V1.1 : redensifier redécoupe les écarts (§21, §25)
+- [x] Tôle cintrée de 3 mm, poses à 20 mm sur la peau extérieure → points ajoutés sur la peau extérieure, surface d'une peau ou des deux (`PassSurface.DensifiesOnTheOuterSkinOfAThinBentSheet`)
+- [x] Surface portant les deux peaux → le test de côté choisit la peau (`PassSurface.TheSideTestIsWhatKeepsTheOuterSkin`)
+- [x] Pose ajoutée → z = normale du triangle, x orthogonal à z et dans le sens de l'écart (`PassSurface.AnAddedPoseTakesTheTriangleNormalAndFollowsTheGap`)
+- [x] Aucun triangle du bon côté, ou axes z opposés → écart sauté (`PassSurface.SkipsAGapWithoutATriangleOnTheRightSide`, `PassSurface.SkipsAGapBetweenOpposedPoses`)
 
 ### Couverture
 - [x] Deux passes espacées de 100 mm, disque de 125 mm → tout couvert (`FaceCoverage.TwoPassesAtTheDiscDiameterCoverEverything`)
@@ -521,11 +541,10 @@ Tous cochés : le test nommé passe sur `2dd5dfe` plus le retrait de l'export `.
 
 ---
 
-# V1.1 : en conception
+# V1.1
 
-Statut : **en conception, non implémentée**. Rien de cette section n'existe dans le code.
-Les valeurs encore ouvertes sont listées en §24 ; tant qu'elles le sont, la section n'est
-pas figée pour l'implémentation.
+Statut : **implémentée** le 01/11/2026. Les écarts de réalisation sont signalés là où ils se
+produisent (§22) et au journal (N24 à N30). Les questions encore ouvertes sont en §24.
 
 **Principe de V1.1 : les gestes suivent les conventions des logiciels de CAO** (SolidWorks,
 Fusion, Onshape, FreeCAD). Quand ces logiciels divergent, la règle nomme celui qui a été
@@ -542,7 +561,7 @@ droit garde la rotation de la vue (§6.3), comme dans Onshape.
 | pré-sélection | le point sous le curseur, éclairé avant tout clic |
 | action | une modification du chemin livré ou du tracé qu'Annuler défait en une fois. Un changement de sélection n'est pas une action |
 | écart | l'espace entre deux poses de contact voisines du chemin livré tel qu'il est au moment de la commande. L'approche et le retrait ne bordent aucun écart |
-| face du cube | une des six faces du cube de navigation (§21). Sans rapport avec une face du maillage ou une face CAO |
+| face du cube | une des six faces du cube de navigation (§22). Sans rapport avec une face du maillage ou une face CAO |
 
 ## 18. Le chemin livré devient une liste de poses éditée
 
@@ -558,7 +577,14 @@ Remplace, pour l'IHM, la recette de §9.4 (N19).
   pile de Rétablir.
 - Avant génération, le tracé de chaque surface a sa propre pile, de la même forme.
 - Une nouvelle génération et **Reprendre un chemin** vident les piles.
-- Annuler et Rétablir vident la sélection de points, comme dans SolidWorks.
+- Le tracé modifié hors de l'outil Éditer les points (Tracé manuel, Retour arrière, Échap)
+  ou la suppression de sa surface vide les piles de ce tracé ; ouvrir une pièce vide toutes
+  les piles (N25). *Sans cette règle,* Annuler restaurerait une copie périmée et effacerait
+  sans message les sommets tracés depuis.
+- Annuler et Rétablir vident la sélection de points, comme dans SolidWorks. Monter,
+  Descendre, Supprimer une passe, une nouvelle génération et Reprendre un chemin la vident
+  aussi (N24) : chacun change les rangs des poses, et un point choisi désignerait une autre
+  pose ou une passe disparue.
 - Le chemin livré est **modifié** dès qu'une action a été faite depuis la dernière
   génération ou le dernier Reprendre un chemin. Ce drapeau remplace la « retouche » de V1 :
   une nouvelle génération demande confirmation quand le chemin est modifié (règle de §8,
@@ -598,7 +624,7 @@ pas.
 
 Un appui suivi d'un relâchement est un **clic** quand la souris a bougé de moins que la
 distance de glisser du système (`QApplication::startDragDistance`), sinon c'est un
-**glisser**.
+**glisser**. Un glisser parti du vide ne fait rien : ni sélection, ni déplacement (N27).
 
 ### 19.3 Gestes
 
@@ -608,12 +634,12 @@ distance de glisser du système (`QApplication::startDragDistance`), sinon c'est
 | clic sur un point | la sélection devient ce seul point | toutes |
 | Ctrl + clic sur un point | le point est ajouté à la sélection, ou retiré s'il y était | SolidWorks, Fusion |
 | clic dans le vide, Échap | la sélection se vide | toutes |
-| Ctrl + clic dans le vide | rien | SolidWorks |
+| Ctrl + clic dans le vide | rien, la barre contextuelle ne s'ouvre pas | SolidWorks |
 | glisser un point non sélectionné | la sélection devient ce point, qui se déplace | toutes |
 | glisser un point sélectionné | **tous les points sélectionnés** se déplacent (N20) | toutes |
 | Suppr | supprime les points sélectionnés (§20) | toutes |
 | Ctrl+Z, Ctrl+Y | Annuler, Rétablir (§18) | toutes |
-| clic droit et glisser, Alt + clic gauche et glisser, molette | vue, inchangés (§6.3) | Onshape |
+| clic droit et glisser, Alt + clic gauche et glisser, molette | vue, inchangés (§6.3) ; un Alt + clic sans glisser ne choisit ni point ni face (N27) | Onshape |
 
 Un glisser déplace les points ainsi :
 - le **déplacement** est le vecteur 3D entre le point de la pièce sous le curseur à l'appui
@@ -629,14 +655,18 @@ Un glisser déplace les points ainsi :
   pas de test « même côté » ;
 - Ctrl + glisser se comporte comme un glisser : Ctrl ne compte qu'au clic.
 
-Un glisser est une seule action. Sans pièce ouverte (chemin repris seul), le glisser ne
-fait rien et la barre d'état dit « Ouvrez la pièce du chemin » ; Suppr reste possible.
+Un glisser est une seule action, posée au premier déplacement effectif : un glisser dont
+le curseur ne touche jamais la pièce n'est pas une action (N26). Sans pièce ouverte (chemin
+repris seul), le glisser ne fait rien et la barre d'état dit « Ouvrez la pièce du chemin » ;
+Suppr reste possible. Un appui hors de la pièce ne commence pas de glisser : « Commencez le
+glisser sur la pièce. »
 
 Les raccourcis Suppr, Échap, Ctrl+Z et Ctrl+Y de cette section ne valent que **quand
 l'outil Éditer les points est actif et que la vue 3D a le focus**. Avec un autre outil,
 les touches gardent leur effet de V1 (Échap du Polygone et du Tracé manuel), et Ctrl+Z,
 Ctrl+Y ne font rien dans la vue. Dans l'arbre ou la liste des passes, Suppr garde son
-effet de V1.
+effet de V1. Pendant un glisser, ces touches sont ignorées (N26) : elles agiraient sur un
+chemin en cours de déplacement.
 
 ### 19.4 Couleurs
 
@@ -677,7 +707,8 @@ Une action indisponible est grisée, avec une bulle d'aide qui dit pourquoi.
 - **Approche et retrait** : si la première ou la dernière pose de contact est supprimée,
   l'approche ou le retrait est replacé devant la nouvelle, à la même place dans son repère
   qu'avant, comme pour un glisser (§19.3). La valeur courante du champ hauteur
-  d'approche n'intervient pas.
+  d'approche n'intervient pas. Sinon l'approche et le retrait ne bougent pas, même quand
+  la première ou la dernière pose de contact est re-visée par la règle précédente (N28).
 - Une passe garde au moins 4 poses, approche et retrait compris. Si la suppression ferait
   passer **une** des passes concernées sous ce nombre, Supprimer est grisé pour toute la
   sélection, et la bulle d'aide nomme la passe en cause.
@@ -745,9 +776,9 @@ telles qu'elles étaient au moment de Générer. Jamais sur le maillage entier.
    direction de l'écart, de la pose précédente vers la suivante, rendue orthogonale à z.
    Pour un glisser, x garde le sens de marche de la pose, rendu orthogonal à z.
 
-**Pourquoi la surface de la passe (étapes 1 et 3).** Sur une tôle de 3 mm dont la peau
-extérieure est cintrée à un rayon de 20 mm, la droite entre deux poses distantes de 20 mm passe à 2,7 mm sous la peau
-extérieure, plus loin que la demi-épaisseur. La face la plus proche du maillage entier est
+**Pourquoi la surface de la passe (étapes 1 et 3).** Sur une tôle de 3 mm cintrée à un rayon
+intérieur de 20 mm (peau extérieure à 23 mm), la droite entre deux poses de la peau
+extérieure distantes de 20 mm passe à 2,3 mm sous elle, plus loin que la demi-épaisseur. La face la plus proche du maillage entier est
 alors la peau intérieure, et le point est posé sous la pièce. C'est le défaut de V1,
 constaté sur une pièce réelle (annexe B).
 
@@ -798,20 +829,27 @@ Après un clic (face, arête, coin, flèche, maison), la vue est recadrée sur l
 les boutons de V1. Les boutons de vues standard de l'onglet Affichage restent.
 
 **Libellés des faces**, traduits avec la langue de l'IHM. La direction est le côté où se
-place la caméra, dans le repère du maillage :
+place la caméra, dans le repère du maillage. Dans la suite de la spec, une face est nommée
+avec son axe, par exemple « Dessus (+Z) ».
 
-| Face du cube | Caméra placée côté | Vue V1 équivalente |
-| --- | --- | --- |
-| Face (−Y) | −Y | Face |
-| Arrière (+Y) | +Y | |
-| Droite (+X) | +X | Côté |
-| Gauche (−X) | −X | |
-| Dessus (+Z) | +Z | Dessus |
-| Dessous (−Z) | −Z | |
+| Face du cube | Caméra placée côté | Libellé affiché (fr / en) | Vue V1 équivalente |
+| --- | --- | --- | --- |
+| Face (−Y) | −Y | FACE / FRONT | Face |
+| Arrière (+Y) | +Y | ARRIERE / BACK | |
+| Droite (+X) | +X | DROITE / RIGHT | Côté |
+| Gauche (−X) | −X | GAUCHE / LEFT | |
+| Dessus (+Z) | +Z | DESSUS / TOP | Dessus |
+| Dessous (−Z) | −Z | DESSOUS / BOTTOM | |
 
-Réalisation prévue : `vtkAnnotatedCubeActor` dans un `vtkOrientationMarkerWidget`, avec
-la détection des clics et les flèches écrites dans le fork. `vtkCameraOrientationWidget`
-(VTK 9.1) est écarté : il donne des axes cliquables, pas de faces, d'arêtes ni de coins.
+**Écart assumé (N30) :** le libellé affiché est en majuscules, sans accent ni axe. Le texte
+des faces est dessiné par `vtkVectorText`, qui ne connaît que l'ASCII ; « ARRIERE (+Y) » ne
+se lit plus à la taille du cube. Les axes du repère restent dessinés dans la vue.
+
+Réalisation : `vtkAnnotatedCubeActor` dans un renderer VTK séparé, en couche du dessus et
+non interactif, calé à chaque image sur l'orientation de la caméra. Les flèches et le bouton
+maison sont des boutons Qt posés sur la vue. **Écart assumé (N29) :** la réalisation prévue
+était un `vtkOrientationMarkerWidget`. `vtkCameraOrientationWidget` (VTK 9.1) est écarté :
+il donne des axes cliquables, pas de faces, d'arêtes ni de coins.
 
 ## 23. Matrice d'erreurs V1.1
 
@@ -822,6 +860,7 @@ la détection des clics et les flèches écrites dans le fork. `vtkCameraOrienta
 | Densifier sans génération, sans pièce, sur une passe sans surface, ou avec une sélection autre que deux poses d'une même passe | action grisée, bulle d'aide qui dit laquelle des conditions manque |
 | Densifier avec un aperçu vide | action grisée, bulle d'aide qui le dit |
 | Glisser sans pièce ouverte | rien ne bouge, message dans la barre d'état |
+| Appui pour glisser hors de la pièce, pièce ouverte | rien ne bouge, message « Commencez le glisser sur la pièce. » |
 | Glisser une pose d'une passe sans surface (chemin repris), pièce ouverte | rien ne bouge, message « Surface inconnue pour cette passe (chemin repris) » ; sans pièce, la ligne précédente s'applique |
 | Densifier : un écart sans triangle valable, ou aux axes z opposés (§21.1) | cet écart est sauté, les autres sont densifiés ; la barre d'état donne le nombre d'écarts sautés ; si tous le sont, l'aperçu est vide et Densifier grisé |
 | Glisser : pas de triangle valable pour une pose | la pose reste à sa place d'avant le glisser |
@@ -841,23 +880,28 @@ la détection des clics et les flèches écrites dans le fork. `vtkCameraOrienta
 
 ## 25. Critères d'acceptation V1.1
 
+Coché : le test nommé passe le 01/11/2026, en Release, noether_gui 94/94. « Logique » : le
+test vérifie le calcul, pas le geste dans la fenêtre. Non coché : geste dans la vue, contrôlé
+à l'écran ; aucun test automatique ne joue appui, mouvement et relâchement (annexe B).
+
 ### Sélection et saisie
-- [ ] Clic à 5 pixels d'une pose visible → elle seule est sélectionnée
-- [ ] Clic à 15 pixels de toute pose → sélection vide
-- [ ] Deux poses à moins de 10 pixels du curseur → la plus proche à l'écran est saisie
-- [ ] Pose dont le segment caméra → pose rencontre la pièce à 5 mm avant elle → ni pré-sélectionnée ni saisie
+- [x] Clic à 5 pixels d'une pose visible → elle seule est sélectionnée (`Picking.TakesTheNearestVisiblePointWithinTheRadius`, logique)
+- [x] Clic à 15 pixels de toute pose → sélection vide (`Picking.TakesTheNearestVisiblePointWithinTheRadius`, `PointSelection.AClickSelectsOnlyThePointAndAClickInTheVoidClears`, logique)
+- [x] Deux poses à moins de 10 pixels du curseur → la plus proche à l'écran est saisie (`Picking.TakesTheNearestVisiblePointWithinTheRadius`, logique)
+- [x] Pose dont le segment caméra → pose rencontre la pièce à 5 mm avant elle → ni pré-sélectionnée ni saisie (`Picking.APointHiddenByThePartIsNotVisible`, logique)
 - [ ] Survol d'une pose visible à moins de 10 pixels → dessinée en pré-sélection ; curseur éloigné → dessin normal
-- [ ] Ctrl + clic sur une pose non sélectionnée → ajoutée ; sur une pose sélectionnée → retirée
-- [ ] Ctrl + clic dans le vide → sélection inchangée
+- [x] Ctrl + clic sur une pose non sélectionnée → ajoutée ; sur une pose sélectionnée → retirée (`PointSelection.CtrlClickTogglesAndCtrlClickInTheVoidKeeps`)
+- [x] Ctrl + clic dans le vide → sélection inchangée (`PointSelection.CtrlClickTogglesAndCtrlClickInTheVoidKeeps`)
 - [ ] `startDragDistance` fixé à 10 dans le test, appui et relâchement à 5 pixels → clic, aucune pose ne bouge ; à 15 pixels → glisser
-- [ ] Glisser une pose parmi trois sélectionnées → les trois se déplacent du même vecteur, chacune reposée sur la pièce
-- [ ] Glisser une pose non sélectionnée alors que deux autres le sont → elle seule bouge et devient la sélection
+- [x] Glisser une pose parmi trois sélectionnées → les trois se déplacent du même vecteur, chacune reposée sur la pièce (`Drag.EverySelectedPoseMovesByTheSameVectorOnTheSurface`)
+- [x] Glisser une pose non sélectionnée alors que deux autres le sont → elle seule bouge et devient la sélection (`PointSelection.DraggingAnUnselectedPointMakesItTheSelection`, logique)
 - [ ] Approche ou retrait sous le curseur → non saisi
-- [ ] Glisser une sélection qui contient la première pose de contact → l'approche la suit, à la même place dans son repère
+- [x] Glisser une sélection qui contient la première pose de contact → l'approche la suit, à la même place dans son repère (`Drag.TheApproachFollowsTheFirstContactAtTheSamePlaceInItsFrame`)
 - [ ] Curseur sorti de la pièce pendant un glisser → les poses restent à leur dernière place
-- [ ] Annuler ou Rétablir → sélection vide
+- [x] Annuler ou Rétablir → sélection vide (`PathEditWidget.EveryRenumberingIsAnnouncedAndNothingElse` : l'annonce est testée, son branchement sur la sélection se contrôle à l'écran)
 - [ ] Outil Polygone actif, Échap → le contour est effacé (V1), aucune sélection de points touchée ; Ctrl+Z → rien dans la vue
 - [ ] Nouvelle génération, Reprendre un chemin, sortie de l'outil → sélection vide
+- [x] Monter, Descendre, Supprimer une passe, nouvelles passes, Annuler, Rétablir → annoncés ; un glisser n'est pas annoncé (`PathEditWidget.EveryRenumberingIsAnnouncedAndNothingElse`)
 
 ### Barre contextuelle et panneau
 - [ ] Clic sur une pose → la barre apparaît près du curseur, entière dans la vue ; clic hors d'elle, début de glisser ou Échap → elle disparaît
@@ -866,47 +910,51 @@ la détection des clics et les flèches écrites dans le fork. `vtkCameraOrienta
 - [ ] Action grisée → bulle d'aide qui dit la condition manquante
 
 ### Suppression
-- [ ] Suppr sur la pose k au milieu → la passe perd cette pose, les autres gardent position et ordre
-- [ ] Suppr sur la pose k → l'axe x de la pose k−1 vise la pose k+1, son z et sa position sont inchangés
-- [ ] Suppr sur la première pose de contact → l'approche garde sa place dans le repère de la nouvelle première, même si le champ hauteur d'approche a changé
-- [ ] Suppr sur une pose ajoutée par Densifier → elle disparaît, les poses voisines restent
-- [ ] Sélection sur deux passes dont une tomberait à 3 poses → Supprimer grisé, bulle qui nomme cette passe
-- [ ] Suppr sur trois poses, Ctrl+Z → les trois reviennent ; Ctrl+Y → elles disparaissent de nouveau
-- [ ] Ctrl+Z, puis une nouvelle action, puis Ctrl+Y → rien n'est rétabli
+- [x] Suppr sur la pose k au milieu → la passe perd cette pose, les autres gardent position et ordre (`EditedPath.RemovingAMiddlePoseKeepsTheOthersInPlaceAndOrder`)
+- [x] Suppr sur la pose k → l'axe x de la pose k−1 vise la pose k+1, son z et sa position sont inchangés (`EditedPath.ThePoseBeforeAHoleAimsAtItsNewNext`)
+- [x] Suppr sur la première pose de contact → l'approche garde sa place dans le repère de la nouvelle première, même si le champ hauteur d'approche a changé (`EditedPath.TheApproachFollowsANewFirstContactAtTheSamePlaceInItsFrame`)
+- [x] Suppr sur une pose du milieu d'une passe coudée → l'approche et le retrait ne bougent pas (`EditedPath.TheApproachStaysWhenItsFirstContactIsKept`)
+- [x] Suppr sur une pose ajoutée par Densifier → elle disparaît, les poses voisines restent (`EditedPath.AnAddedPoseIsAPoseLikeAnyOther`)
+- [x] Sélection sur deux passes dont une tomberait à 3 poses → Supprimer grisé, bulle qui nomme cette passe (`EditedPath.RefusesARemovalThatLeavesAPassTooShortAndNamesIt` ; le texte de la bulle se contrôle à l'écran)
+- [x] Suppr sur trois poses, Ctrl+Z → les trois reviennent ; Ctrl+Y → elles disparaissent de nouveau (`EditedPath.UndoAndRedoWalkOneStackOfCopies`, `PathEditWidget.InsertedAndRemovedPosesAreOneActionEach`)
+- [x] Ctrl+Z, puis une nouvelle action, puis Ctrl+Y → rien n'est rétabli (`EditedPath.ANewActionAfterUndoForgetsWhatCouldBeRedone`)
 - [ ] Suppr avec le focus dans l'arbre → effet de V1 sur l'arbre, aucun point supprimé
 - [ ] Suppr sur un sommet du milieu du tracé → la polyligne relie ses deux voisins
 - [ ] Tracé de 2 sommets, un sommet sélectionné → Supprimer grisé
 
 ### Densifier
-- [ ] Mode Nombre, N = 3, A et B voisines, écart droit de 40 mm sur un plan → 3 points ajoutés, espacés de 10 mm
-- [ ] Mode Nombre, N = 2, trois écarts de A à B → 6 points ajoutés
-- [ ] Mode Pas, écart de 20 mm, pas de 7 mm → 2 points ajoutés (règle de V1)
-- [ ] Densifier deux fois en mode Nombre, N = 1, sur un écart → 3 points dans l'écart d'origine
+- [x] Mode Nombre, N = 3, A et B voisines, écart droit de 40 mm sur un plan → 3 points ajoutés, espacés de 10 mm (`Densify.CountModeSpreadsNPointsEvenly`)
+- [x] Mode Nombre, N = 2, trois écarts de A à B → 6 points ajoutés (`Densify.CountModeFillsEveryGapFromAToB`)
+- [x] Mode Pas, écart de 20 mm, pas de 7 mm → 2 points ajoutés (règle de V1) (`Densify.StepModeKeepsTheV1Rule`)
+- [x] Densifier deux fois en mode Nombre, N = 1, sur un écart → 3 points dans l'écart d'origine (`Densify.DensifyingTwiceCutsTheGapsAsTheyHaveBecome`)
 - [ ] Changement de N → l'aperçu est recalculé, le chemin livré ne change pas
 - [ ] Mode Pas, aucun écart plus long que le pas → Densifier grisé
-- [ ] Sélection de trois poses → Densifier grisé
+- [x] Sélection de trois poses → Densifier grisé (`PointSelection.DensifyNeedsExactlyTwoPosesOfOnePassInPassOrder`, logique)
 - [ ] Après Densifier → A et B toujours sélectionnées
-- [ ] Tôle de 3 mm cintrée à un rayon intérieur de 20 mm, surface validée = peau extérieure du cintrage, A et B voisines distantes de 20 mm, N = 3 → chaque point est sur un triangle de la peau extérieure
-- [ ] Même tôle, surface validée = les deux peaux et la tranche → chaque point est sur un triangle dont la normale est du côté de A et B
-- [ ] Point ajouté → son axe z est la normale plane de son triangle, son axe x est orthogonal à z
-- [ ] Chemin repris depuis un fichier YAML, pièce ouverte → Densifier grisé, bulle d'aide qui le dit ; glisser sans effet, message en barre d'état
+- [x] Tôle de 3 mm cintrée à un rayon intérieur de 20 mm, surface validée = peau extérieure du cintrage, A et B voisines distantes de 20 mm, N = 3 → chaque point est sur un triangle de la peau extérieure (`PassSurface.DensifiesOnTheOuterSkinOfAThinBentSheet`)
+- [x] Même tôle, surface validée = les deux peaux et la tranche → chaque point est sur un triangle dont la normale est du côté de A et B (`PassSurface.TheSideTestIsWhatKeepsTheOuterSkin`)
+- [x] Point ajouté → son axe z est la normale plane de son triangle, son axe x est orthogonal à z (`PassSurface.AnAddedPoseTakesTheTriangleNormalAndFollowsTheGap`)
+- [x] Chemin repris depuis un fichier YAML, pièce ouverte → Densifier grisé, bulle d'aide qui le dit ; glisser sans effet, message en barre d'état (`Densify.RefusesAPassWithoutSurface`, `Drag.APassWithoutSurfaceIsRefused`, logique)
 - [ ] Glisser une pose vers une autre surface → elle est posée sur un triangle de sa propre surface
 
+### Fenêtre
+- [x] La fenêtre complète se construit, panneaux et cube compris (`TPPWidget.TheWindowBuilds`)
+
 ### Cube
-- [ ] Clic sur la case centrale de « Dessus (+Z) » → même caméra que le bouton Dessus de V1
-- [ ] Clic sur une case d'angle → caméra sur la diagonale de ce coin, haut +Z
-- [ ] Clic sur la case de bord entre « Face (−Y) » et « Droite (+X) » → caméra sur (1, −1, 0), haut +Z
-- [ ] Vue de face, clic sur la flèche courbe horaire → la vue tourne de 90° dans le sens horaire ; sur la flèche anti-horaire → 90° dans l'autre sens
-- [ ] Vue « Face (−Y) », flèches triangulaires droite, gauche, haut, bas → vues « Droite (+X) », « Gauche (−X) », « Dessus (+Z) », « Dessous (−Z) »
-- [ ] Vue à 30° de toute face → aucune flèche affichée
+- [x] Clic sur la case centrale de « Dessus (+Z) » → même caméra que le bouton Dessus de V1 (`ViewCube.TheCentreOfAFaceGivesItsAxis`, logique)
+- [x] Clic sur une case d'angle → caméra sur la diagonale de ce coin, haut +Z (`ViewCube.AnEdgeGivesTheBisectorAndACornerTheDiagonal`, logique)
+- [x] Clic sur la case de bord entre « Face (−Y) » et « Droite (+X) » → caméra sur (1, −1, 0), haut +Z (`ViewCube.AnEdgeGivesTheBisectorAndACornerTheDiagonal`, logique)
+- [x] Vue de face, clic sur la flèche courbe horaire → la vue tourne de 90° dans le sens horaire ; sur la flèche anti-horaire → 90° dans l'autre sens (`ViewCube.CurvedArrowsTurnTheViewByAQuarter`, logique)
+- [x] Vue « Face (−Y) », flèches triangulaires droite, gauche, haut, bas → vues « Droite (+X) », « Gauche (−X) », « Dessus (+Z) », « Dessous (−Z) » (`ViewCube.ArrowsLeadToTheNeighbourFacesOfTheFrontView`, logique)
+- [x] Vue à 30° de toute face → aucune flèche affichée (`ViewCube.ArrowsShowOnlyWithinOneDegreeOfAFace`, logique : le test vérifie le seuil de 1° à 0,6° et 1,7° et sur la diagonale, une vue à 30° tombe du même côté)
 - [ ] Appui sur le cube pendant un glisser de pose → ignoré
 - [ ] Glisser le cube → la vue tourne, sans recadrage
 - [ ] Bouton maison → même caméra que le bouton Isométrique de V1
 - [ ] Changement de langue → libellés des faces traduits
 
-## 26. Ce que V1.1 remplacera dans V1
+## 26. Ce que V1.1 remplace dans V1
 
-À l'implémentation, ces passages de V1 seront barrés avec un renvoi ici :
+Ces passages de V1 sont barrés avec un renvoi (01/11/2026) :
 
 | V1 | Remplacé par |
 | --- | --- |
@@ -919,9 +967,9 @@ la détection des clics et les flèches écrites dans le fork. `vtkCameraOrienta
 | §11.1, refus d'export pour « recette incohérente » | §18 : seul reste le refus d'une passe de moins de 4 poses |
 | §13, ligne « Densifier, pièce absente : refus » | §23, action grisée |
 | §15, critère `PathEditWidget.ADensifiedPlaceIsReplacedAndANewGenerationForgetsIt` | §25, Densifier deux fois |
-| §15, critères `PathEditWidget.ReportsAPassTooShortToDeliver`, `RefusesARecipeWrittenOnAnotherGeneration`, `MovesAPoseAndUndoesTheWholeDragAtOnce` | §25 ; les tests de la recette restent dans `noether_tpp` sans être liés à l'IHM |
+| §15, critère `PathEditWidget.RefusesARecipeWrittenOnAnotherGeneration`, et test `MovesAPoseAndUndoesTheWholeDragAtOnce` renommé `ADragIsUndoneAtOnce` | §25 ; les tests de la recette restent dans `noether_tpp` sans être liés à l'IHM. `ReportsAPassTooShortToDeliver` reste : l'export refuse toujours une passe de moins de 4 poses (§18) |
 | N7 | N19 |
-| §9.2, « projetées sur la face la plus proche du maillage entier » | §21.1 |
+| ~~§9.2, « projetées sur la face la plus proche du maillage entier »~~ | §21.1, fait le 01/11/2026 |
 
 
 ---
@@ -936,8 +984,8 @@ la détection des clics et les flèches écrites dans le fork. `vtkCameraOrienta
 | N4 | Une surface est d'un seul tenant et donne une seule passe | une passe ne s'interrompt pas ; découper en silence cacherait des approches et des retraits |
 | N5 | La retouche est une recette déclarative avec empreintes, et non une suite d'actions | une suite d'actions renumérote ses propres étapes et devient ambiguë à rejouer |
 | N6 | Une soudure retire l'approche et le retrait au raccord | les garder ferait décoller l'outil au milieu d'une passe |
-| N7 | Les poses ajoutées par densification sont enregistrées complètes et ne suivent pas leurs voisines | elles restent telles qu'elles ont été posées sur la pièce |
-| N8 | Les boutons retourner, souder, scinder, enchaîner et revenir sont cachés en V1 | IHM simplifiée (commit `4950dbb`) ; le code et ses tests restent |
+| N7 | ~~Les poses ajoutées par densification sont enregistrées complètes et ne suivent pas leurs voisines~~, dépassée par N19 pour l'IHM | elles restent telles qu'elles ont été posées sur la pièce |
+| N8 | Les boutons retourner, souder, scinder, enchaîner et revenir sont cachés en V1 ; ~~le code et ses tests restent~~ en V1.1, ils ne restent que dans `tool_path_recipe` (`noether_tpp`) | IHM simplifiée (commit `4950dbb`) ; la liste de poses éditée (N19) ne passe plus par la recette |
 | N9 | Couverture mesurée sur des cellules d'un sixième du rayon, et non sur les triangles | le résultat ne doit pas dépendre de la finesse du maillage |
 | N10 | Exporter n'écrit plus `<nom>.edits.yaml` | décision utilisateur du 31/10/2026 : le fichier n'était relu par rien, et sans le tracé enregistré la recette ne se rejoue pas |
 | N11 | Les gestes de V1.1 suivent les conventions des logiciels de CAO | décision utilisateur du 31/10/2026 : un opérateur qui connaît la CAO retrouve ses gestes |
@@ -947,12 +995,19 @@ la détection des clics et les flèches écrites dans le fork. `vtkCameraOrienta
 | N15 | Après suppression, l'axe x de la pose précédente est recalculé vers sa nouvelle suivante, même si elle avait été déplacée | en CAO, supprimer un sommet reconstruit la courbe à partir des sommets restants ; le sens de marche de cette pose a changé |
 | N16 | En mode Nombre, N points par écart entre poses voisines, poses existantes immobiles | garde la règle de V1 ; même lecture que la subdivision d'arêtes des mailleurs |
 | N17 | Cube de navigation en haut à droite, avec faces, arêtes, coins, flèches et maison | position et éléments du ViewCube d'Autodesk, repris par FreeCAD et Onshape |
-| N18 | Libellés du cube : nom de la vue et axe du maillage, par exemple « Dessus (+Z) » | la vue est dans le repère de la CAO, pas dans celui du robot ; le nom seul n'a de sens que si +Z est le haut |
+| N18 | Libellés du cube : nom de la vue ~~et axe du maillage, par exemple « Dessus (+Z) »~~ ; l'axe est dépassé par N30 | la vue est dans le repère de la CAO, pas dans celui du robot ; le nom seul n'a de sens que si +Z est le haut |
 | N19 | En V1.1, l'IHM édite le chemin livré comme une liste de poses ; Annuler et Rétablir gardent des copies ; une pose ajoutée devient une pose ordinaire ; redensifier redécoupe les écarts | décision utilisateur du 31/10/2026 : la recette repérait les poses ajoutées par le rang de leur précédente, une suppression les aurait effacées en silence ; sans `.edits.yaml` (N10), la recette n'a plus rien à rejouer. Remplace N7 pour l'IHM |
 | N20 | Glisser un point sélectionné déplace toute la sélection | décision utilisateur du 31/10/2026 : convention CAO |
 | N21 | Un point se saisit à moins de 10 pixels du curseur à l'écran, le plus proche et visible ; clic et glisser se distinguent par `QApplication::startDragDistance` | décision utilisateur du 31/10/2026 : convention CAO ; 50 mm sur la pièce englobait plusieurs poses espacées de 10 à 20 mm |
 | N22 | Un point ajouté ou glissé se pose sur la surface de sa passe, sur une face tournée du même côté que la normale attendue ; aucun seuil d'angle | décision utilisateur du 01/11/2026 : la face la plus proche du maillage entier est la peau intérieure dès que la droite entre deux poses s'enfonce de plus d'une demi-épaisseur ; un seuil d'angle (60° essayé) dépend des pièces ; banc du 01/11/2026 hors dépôt, 36 pièces (21 tôles synthétiques, 15 pièces réelles) : aucune mauvaise peau, aucun refus ; état de l'art dans `docs/recherche/projection-points-sur-maillage.md` (à la racine du fork) |
 | N23 | Une passe sans surface connue ne se densifie pas et ne se glisse pas | revenir au maillage entier ramènerait le défaut de N22 sans le dire |
+| N24 | Tout changement des rangs de poses (Monter, Descendre, Supprimer une passe, nouvelles passes, Annuler, Rétablir) vide la sélection de points | décision utilisateur du 01/11/2026, après relecture : un point choisi désignerait une autre pose ou une passe disparue, et l'action suivante lèverait une exception |
+| N25 | Le tracé modifié hors des piles d'Annuler vide ses piles ; ouvrir une pièce les vide toutes | décision utilisateur du 01/11/2026, après relecture : Annuler restaurerait une copie périmée et effacerait les sommets tracés depuis ; les numéros de surface repartent de 0 à l'ouverture |
+| N26 | Un glisser n'est une action qu'au premier déplacement effectif ; les touches sont ignorées pendant un glisser | décision utilisateur du 01/11/2026 : un Annuler sans effet visible trompe l'opérateur ; une touche agirait sur un chemin en cours de déplacement |
+| N27 | Un glisser parti du vide, un Ctrl + clic dans le vide et un Alt + clic sous un outil de glisser n'ont aucun effet | décision utilisateur du 01/11/2026 : un glisser n'est pas un clic (§19.2) ; Alt réserve la souris à la vue (§6.3) |
+| N28 | Après une suppression (§20.1), l'approche et le retrait ne bougent que si leur pose de contact disparaît. Un glisser de cette pose les emporte toujours (§19.3) | décision utilisateur du 01/11/2026 : re-viser la première pose de contact faisait tourner l'approche autour d'elle, sans que l'opérateur l'ait demandé |
+| N29 | Cube dans un renderer VTK séparé, en couche du dessus et non interactif, au lieu d'un `vtkOrientationMarkerWidget` | décision utilisateur du 01/11/2026 : le point du cube sous un pixel se calcule avec la caméra de ce renderer, et le style d'interaction de la vue garde la souris (rotation, zoom) sans second gestionnaire |
+| N30 | Libellés du cube en majuscules, sans accent ni axe | décision utilisateur du 01/11/2026 : `vtkVectorText` ne connaît que l'ASCII ; « ARRIERE (+Y) » ne se lit plus à la taille du cube ; les axes du repère restent dessinés dans la vue |
 
 ## Annexe B : trous connus
 
@@ -964,6 +1019,9 @@ la détection des clics et les flèches écrites dans le fork. `vtkCameraOrienta
 | `StartEndOrganization` et `CurvatureThreshold` | plugins disponibles pour une configuration de pipeline ; la génération V1 ne passe pas par le pipeline |
 | Configuration de pipeline `-c` | chargée dans le dock caché ; sans effet sur la génération V1 |
 | Région | compare chaque face à sa voisine, pas à la face de départ : sur une courbure lente, la région peut faire le tour de la pièce |
-| Contrôle à l'écran (§15) | pas de test automatique de la disposition ni du dessin |
-| Densifier pose sur la face la plus proche du maillage entier | constaté le 31/10/2026 sur une pièce réelle (capot de climatisation) : sur une tôle mince courbée, des points tombent sur la peau intérieure ; correction prévue en V1.1 (§21.1), non implémentée |
+| Contrôle à l'écran (§15, §25) | pas de test automatique de la disposition ni du dessin ; aucun test ne joue appui, mouvement et relâchement dans la vue (gestes de §19, barre, panneau, cube) |
+| ~~Densifier pose sur la face la plus proche du maillage entier~~ | constaté le 31/10/2026 sur une pièce réelle (capot de climatisation) ; corrigé le 01/11/2026 (§21.1). Le glisser de §9.1 suivait encore la face sous le curseur : corrigé avec l'outil Éditer les points (§19.3), le 01/11/2026 |
+| Mémoire d'Annuler | chaque action garde une copie complète du chemin livré, sans plafond |
+| Surface de passe | le nuage du maillage est reconverti à chaque construction : une fois par surface à Générer, une fois par glisser de sommets |
+| Chemin « modifié » après tout annuler | `modified` vaut « pile d'Annuler non vide » : annuler toutes les actions rend le chemin non modifié, et une génération ne demande plus de confirmation alors que Rétablir pouvait encore les refaire. Écart à §18 (« dès qu'une action a été faite ») |
 | Textes non traduits | la ligne « N poses » de la liste des passes est en français seul et ne change pas de langue ; les défauts de retouche affichés à l'export viennent de `noether_tpp`, en anglais seul |
