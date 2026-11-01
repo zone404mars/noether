@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Noether : guide d'utilisation</title>
+<style>
+  @page { size: A4; margin: 15mm 15mm 15mm 15mm; }
+  :root { --ink: #1d2430; --muted: #5b6577; --accent: #c41e3a; --rule: #d9dee7; --soft: #f3f5f9; }
+  body { font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif; color: var(--ink);
+         font-size: 10pt; line-height: 1.45; margin: 0; }
+  h1 { font-size: 26pt; margin: 0 0 6pt; letter-spacing: -0.5pt; }
+  h2 { font-size: 15pt; margin: 0 0 8pt; padding-bottom: 4pt; border-bottom: 2pt solid var(--accent); }
+  h3 { font-size: 11.5pt; margin: 10pt 0 4pt; }
+  p { margin: 0 0 6pt; }
+  ul, ol { margin: 0 0 6pt; padding-left: 16pt; }
+  li { margin-bottom: 2pt; }
+  section { page-break-before: always; }
+  figure { margin: 6pt 0 8pt; }
+  figure img { max-width: 100%; max-height: 92mm; border: 1px solid var(--rule); display: block; margin: 0 auto; }
+  figure.mid img { max-height: 70mm; }
+  .cover figure img { max-height: 115mm; }
+  figcaption { font-size: 8.5pt; color: var(--muted); margin-top: 3pt; }
+  table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 4pt 0 8pt; font-size: 9pt; }
+  th, td { border: 1px solid var(--rule); padding: 3pt 5pt; text-align: left; vertical-align: top;
+           overflow-wrap: anywhere; }
+  th { background: var(--soft); }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.5pt; background: var(--soft); padding: 0 2pt; }
+  pre { font-family: "DejaVu Sans Mono", monospace; font-size: 8pt; background: var(--soft);
+        padding: 6pt; border-left: 3pt solid var(--rule); margin: 4pt 0 8pt; white-space: pre-wrap; }
+  .num { display: inline-block; width: 15pt; height: 15pt; line-height: 15pt; border-radius: 50%;
+         background: var(--accent); color: white; text-align: center; font-weight: bold; font-size: 8.5pt; }
+  .note { background: var(--soft); border-left: 3pt solid var(--accent); padding: 5pt 8pt; margin: 6pt 0 8pt; }
+  .cover { height: 255mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .cover .sub { font-size: 13pt; color: var(--muted); }
+  .flow { display: flex; gap: 4pt; align-items: stretch; margin: 8pt 0; }
+  .flow div { flex: 1; border: 1.5pt solid var(--accent); border-radius: 4pt; padding: 5pt; font-size: 8.5pt; text-align: center; }
+  .flow b { display: block; font-size: 9.5pt; margin-bottom: 2pt; }
+  .meta td:first-child { width: 30%; color: var(--muted); }
+  .row { display: flex; gap: 8pt; align-items: flex-start; }
+  .row > figure { flex: 1; min-width: 0; margin-top: 0; }
+  .row > .text { flex: 1.3; min-width: 0; }
+  .w30 { flex: 0 0 30% !important; }
+  .w40 { flex: 0 0 40% !important; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div>
+    <p class="sub">Zone 404 · Cellule de ponçage MBC</p>
+    <h1>Noether : guide d'utilisation</h1>
+    <p class="sub">Préparer une trajectoire de ponçage pas à pas, sur l'exemple de la grande girouette.</p>
+  </div>
+  <figure><img src="img/result_iso.png" alt="Trajectoire générée sur la grande girouette, vue isométrique">
+    <figcaption>Résultat obtenu à la fin de ce guide : une trajectoire de 337 points sur la zone centrale de la
+    grande girouette. En bleu, la zone balayée par le disque de la ponceuse. En vert, ce qui reste à couvrir.</figcaption></figure>
+  <table class="meta">
+    <tr><td>Pour qui</td><td>Un utilisateur qui programme déjà des trajectoires de robot industriel
+      (points, approches, repères) et qui découvre Noether.</td></tr>
+    <tr><td>Pièce d'exemple</td><td>Grande girouette découpe ADAS, référence 5803171401</td></tr>
+    <tr><td>Version</td><td>Noether Zone 404, V1.1 (interface en français)</td></tr>
+    <tr><td>Date</td><td>1er novembre 2026</td></tr>
+  </table>
+</div>
+
+<section>
+  <h2>1. À quoi sert Noether</h2>
+  <p>Noether calcule la trajectoire de la ponceuse sur une pièce, à partir de son fichier CAO. On choisit la
+  zone à poncer, on dessine le chemin à la souris directement sur la pièce, et Noether en tire la liste des
+  points que le robot va suivre, avec l'orientation de l'outil en chaque point. C'est l'équivalent d'un
+  programme de déplacement, mais créé sur le modèle 3D au lieu d'être appris point par point sur le robot.</p>
+  <div class="flow">
+    <div><b>1 Fichier</b>Ouvrir la pièce CAO</div>
+    <div><b>2 Sélection</b>Choisir la zone à poncer</div>
+    <div><b>3 Traitement</b>Dessiner le chemin, générer les points, retoucher</div>
+    <div><b>4 Trajectoire</b>Ordonner les passes, exporter</div>
+  </div>
+  <p>Ces quatre étapes sont les quatre premiers onglets de la fenêtre. Le cinquième onglet, <b>Affichage</b>,
+  règle ce qui est dessiné et l'orientation de la vue.</p>
+
+  <h3>Correspondance avec la programmation robot</h3>
+  <table>
+    <tr><th style="width:24%">Dans Noether</th><th>Équivalent en programmation robot</th></tr>
+    <tr><td>Pose</td><td>Un point de la trajectoire : position X, Y, Z et orientation de l'outil.</td></tr>
+    <tr><td>Passe</td><td>Une trajectoire continue, outil en contact : une suite de points en mouvement linéaire,
+      précédée d'un point d'approche et suivie d'un point de dégagement.</td></tr>
+    <tr><td>Approche, retrait</td><td>Points de dégagement au-dessus du premier et du dernier point de contact,
+      à la hauteur d'approche (50 mm par défaut), dans l'axe de l'outil.</td></tr>
+    <tr><td>Repère de la pièce</td><td>Repère utilisateur (ou repère objet) attaché à la pièce : c'est le repère du
+      fichier CAO. Toutes les poses y sont exprimées, en mètres.</td></tr>
+    <tr><td>Surface</td><td>La zone de la pièce à poncer, choisie à la souris.</td></tr>
+    <tr><td>Tracé</td><td>Le chemin dessiné à la main sur une surface, comme une suite de points de passage.</td></tr>
+    <tr><td>Couverture</td><td>Part de la surface balayée par le disque de la ponceuse le long de la trajectoire.</td></tr>
+  </table>
+  <p>Deux mots reviennent souvent. Le <b>maillage</b> est la pièce découpée en petits triangles, la forme que
+  Noether utilise pour calculer. La <b>normale</b> est la direction perpendiculaire à la surface en un point :
+  l'outil est toujours orienté selon elle.</p>
+</section>
+
+<section>
+  <h2>2. Lancer Noether et lire la fenêtre</h2>
+  <p>Double-cliquer sur l'icône <b>Noether</b> du bureau. Si la fenêtre est déjà ouverte, le double-clic la ramène
+  au premier plan. Si un message d'erreur s'affiche au lancement, le transmettre à l'équipe Zone 404.</p>
+  <figure class="mid"><img src="img/window.png" alt="Fenêtre de Noether au démarrage">
+    <figcaption>Fenêtre au démarrage, sans pièce chargée. Les lettres repèrent les zones décrites ci-dessous.</figcaption></figure>
+  <table>
+    <tr><th style="width:22%">Zone</th><th>Rôle</th></tr>
+    <tr><td><span class="num">A</span> Ruban</td><td>Un onglet par étape, et les boutons de l'étape choisie.</td></tr>
+    <tr><td><span class="num">B</span> Arbre</td><td>La pièce, ses surfaces avec leur tracé, puis les passes générées.
+      Les boutons <b>Reprendre</b> et <b>Supprimer</b> agissent sur la surface choisie dans l'arbre.</td></tr>
+    <tr><td><span class="num">C</span> Vue 3D</td><td>La pièce, la sélection, les tracés, le disque de l'outil et la trajectoire.</td></tr>
+    <tr><td><span class="num">D</span> Options</td><td>L'aide et les réglages du bouton choisi dans le ruban.</td></tr>
+    <tr><td><span class="num">E</span> Barre d'état</td><td>À gauche, ce qu'il faut faire ensuite. À droite, la taille de la
+      pièce et la couverture.</td></tr>
+  </table>
+  <h3>Se déplacer dans la vue</h3>
+  <table>
+    <tr><th style="width:36%">Geste</th><th>Effet</th></tr>
+    <tr><td>Molette</td><td>Zoom.</td></tr>
+    <tr><td>Clic droit maintenu et glissé</td><td>Tourner autour de la pièce, quel que soit le bouton choisi dans le ruban.</td></tr>
+    <tr><td>Clic gauche maintenu et glissé</td><td>Tourner, sauf avec Brosse, Gomme, Tracé manuel et Éditer les
+      points, qui se servent du clic gauche. Avec ces quatre outils, maintenir <b>Alt</b> pour tourner, ou utiliser le clic droit.</td></tr>
+    <tr><td>Cube, en haut à droite de la vue</td><td>Clic sur une face, une arête ou un coin : la vue se place de ce côté (page 4).</td></tr>
+    <tr><td>Affichage, Vues standard</td><td>Boutons Face, Dessus, Côté et Isométrique.</td></tr>
+  </table>
+  <p>Les menus <b>Fichier</b>, <b>Affichage</b> et <b>Génération</b>, en haut, reprennent des actions du ruban.
+  Ce guide n'utilise que le ruban.</p>
+</section>
+
+<section>
+  <h2>3. Étape 1 : ouvrir la pièce</h2>
+  <figure class="mid"><img src="img/open_dialog.png" alt="Fenêtre d'ouverture d'une pièce">
+    <figcaption><span class="num">1</span> Onglet 1 Fichier, bouton Ouvrir une pièce.
+    <span class="num">2</span> Double-clic sur le fichier.</figcaption></figure>
+  <ol>
+    <li>Onglet <b>1 Fichier</b>, cliquer <b>Ouvrir une pièce</b>.</li>
+    <li>Choisir le fichier de la pièce. Formats acceptés : STEP (<code>.step</code>, <code>.stp</code>), le format
+      d'échange CAO habituel, ainsi que PLY et STL. Le fichier doit se trouver dans votre <b>dossier personnel</b>
+      ou un de ses sous-dossiers : Noether ne voit pas les autres disques.</li>
+    <li>Attendre que la pièce apparaisse. Un STEP est d'abord converti en maillage : pour la grande girouette
+      (fichier de 69 Mo), la conversion prend environ une minute. Deux fichiers sont créés à côté du STEP, de même
+      nom, en <code>.ply</code> (le maillage) et en <code>.yaml</code> (le compte rendu de conversion).</li>
+  </ol>
+  <h3>Contrôler la taille de la pièce</h3>
+  <figure><img src="img/loaded_status.png" alt="Barre d'état après chargement">
+    <figcaption>Barre d'état après chargement : unité lue dans le fichier (mm), nombre de triangles et
+    étendue de la pièce en mètres selon X, Y et Z.</figcaption></figure>
+  <p>L'étendue de la grande girouette est 0,0404 x 2,0080 x 0,7228 m : 4 cm d'épaisseur, 2 m de long,
+  72 cm de haut. Comparer ces valeurs aux dimensions réelles de la pièce. Une valeur mille fois trop grande
+  (2008 m) ou trop petite signale une erreur d'unité.</p>
+  <div class="note">Un STEP porte son unité, Noether la lit. Un PLY ou un STL n'en porte pas : il est lu en mètres.
+  Un PLY ou un STL exporté en millimètres apparaît donc mille fois trop grand. Dans le doute, ouvrir le STEP.</div>
+</section>
+
+<section>
+  <h2>4. Orienter la vue</h2>
+  <p>À l'ouverture, la grande girouette est vue par la tranche. Pour la mettre de face :</p>
+  <div class="row">
+    <figure class="w40"><img src="img/views_ribbon.png" alt="Onglet Affichage, bouton Vues standard">
+      <figcaption><span class="num">1</span> Onglet Affichage, Vues standard.</figcaption></figure>
+    <figure class="w30"><img src="img/views_options.png" alt="Boutons des vues standard">
+      <figcaption><span class="num">2</span> Bouton Côté.</figcaption></figure>
+  </div>
+  <figure><img src="img/views_strip.png" alt="Résultat des boutons Côté, Isométrique et Face">
+    <figcaption>Ce que donnent les trois boutons sur la grande girouette. Gauche : bouton Côté, la pièce est de face.
+    Milieu : bouton Isométrique. Droite : bouton Face, la pièce est vue par la tranche.</figcaption></figure>
+  <p>Les noms des boutons se rapportent aux axes du fichier CAO, pas à la pièce : <b>Côté</b> regarde selon
+  l'axe X du fichier, et la grande girouette est dessinée face à X. Sur une autre pièce, essayer les quatre boutons
+  et garder celui qui montre la zone à poncer bien en face. Ajuster ensuite le zoom à la molette.</p>
+  <h3>Le cube de navigation</h3>
+  <div class="row">
+    <figure class="w30"><img src="img/cube.png" alt="Cube de navigation">
+      <figcaption><span class="num">1</span> Face du cube. <span class="num">2</span> Flèches vers la face voisine.
+      <span class="num">3</span> Quart de tour. <span class="num">4</span> Maison.</figcaption></figure>
+    <div class="text">
+      <p>Le cube, en haut à droite de la vue, tourne avec la pièce. Il donne la même chose que les boutons, sans changer d'onglet :</p>
+      <ul>
+        <li>clic au centre d'une face : la vue se place face à elle ; clic près d'une arête ou d'un coin : vue de biais ;</li>
+        <li>clic gauche glissé sur le cube : la vue tourne ;</li>
+        <li>quand la vue est bien en face d'une face, des flèches apparaissent : les triangles passent à la face voisine,
+          les flèches courbes tournent l'image d'un quart de tour ;</li>
+        <li>la maison remet la vue isométrique.</li>
+      </ul>
+      <p>Les noms des faces se rapportent aux axes du fichier CAO : DROITE regarde depuis +X, comme le bouton Côté.</p>
+    </div>
+  </div>
+  <h3>Autres réglages de l'onglet Affichage</h3>
+  <ul>
+    <li><b>Calques</b> : afficher ou cacher la pièce, les tracés, la trajectoire et les repères des poses ;
+      régler le dessin du disque de l'outil et des zones non couvertes.</li>
+    <li><b>Langue</b> : français ou anglais. Le choix est gardé d'un lancement à l'autre.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>5. Étape 2 : choisir la zone à poncer</h2>
+  <div class="row">
+    <figure><img src="img/region.png" alt="Sélection de la zone centrale avec l'outil Région">
+      <figcaption><span class="num">1</span> Outil Région. <span class="num">3</span> Un clic sur la zone
+      centrale : elle passe en orange. <span class="num">4</span> Valider la surface.</figcaption></figure>
+    <figure class="w30"><img src="img/region_options.png" alt="Angle de planéité">
+      <figcaption><span class="num">2</span> Angle de planéité, 20° par défaut.</figcaption></figure>
+  </div>
+  <ol>
+    <li>Onglet <b>2 Sélection</b>, outil <b>Région</b>.</li>
+    <li>Cliquer sur la zone à poncer. La sélection s'étend de proche en proche tant que la surface ne fait pas
+      de pli plus marqué que l'<b>angle de planéité</b>. À 20°, la zone centrale de la grande girouette s'arrête
+      à ses arêtes, sans déborder sur le pourtour. Si la sélection déborde, baisser l'angle et recliquer ;
+      si elle s'arrête trop tôt sur une surface bombée, l'augmenter.</li>
+    <li>Cliquer <b>Valider la surface</b>. La sélection devient une surface dans l'arbre, et passe en rouge dans la vue.</li>
+  </ol>
+  <div class="row">
+    <figure class="w40"><img src="img/validated.png" alt="Surface validée dans l'arbre">
+      <figcaption><span class="num">1</span> « Surface 1 · 92 faces », encore « sans tracé ».</figcaption></figure>
+    <div class="text">
+      <table>
+        <tr><th style="width:22%">Outil</th><th>Geste</th></tr>
+        <tr><td>Région</td><td>Clic sur la zone. Pour une zone lisse bordée d'arêtes nettes.</td></tr>
+        <tr><td>Brosse</td><td>Clic gauche glissé : peint les faces sous le pinceau. Maintenir <b>Maj</b> avant de cliquer pour effacer.</td></tr>
+        <tr><td>Polygone</td><td>Un clic par sommet du contour. Pour fermer : cliquer le premier sommet, ou Entrée,
+          ou double-clic. Retour arrière retire le dernier sommet, Échap annule.</td></tr>
+        <tr><td>Gomme</td><td>Clic gauche glissé : retire des faces de la sélection.</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="note">Une sélection faite de plusieurs morceaux séparés est refusée : valider chaque morceau comme une surface.
+  Pour modifier une surface déjà validée : la choisir dans l'arbre et cliquer <b>Reprendre</b>. Son tracé est alors effacé.</div>
+</section>
+
+<section>
+  <h2>6. Étape 3 : régler l'outil et dessiner le chemin</h2>
+  <div class="row">
+    <div class="text" style="flex:1">
+      <figure><img src="img/trace_ribbon.png" alt="Onglet Traitement, Tracé manuel">
+        <figcaption><span class="num">1</span> Onglet 3 Traitement, Tracé manuel.</figcaption></figure>
+      <figure><img src="img/trace_tree.png" alt="Surface choisie dans l'arbre">
+        <figcaption><span class="num">2</span> Choisir la surface dans l'arbre.</figcaption></figure>
+    </div>
+    <figure class="w40"><img src="img/trace_options.png" alt="Réglages du tracé">
+      <figcaption><span class="num">3</span> Pas du tracé. <span class="num">4</span> Hauteur d'approche.
+      <span class="num">5</span> Rayon de l'outil.</figcaption></figure>
+  </div>
+  <table>
+    <tr><th style="width:22%">Réglage</th><th>Effet</th><th style="width:24%">Valeur par défaut</th></tr>
+    <tr><td>Pas du tracé</td><td>Distance entre deux points de la trajectoire.</td><td>20 mm</td></tr>
+    <tr><td>Hauteur d'approche</td><td>Distance des points d'approche et de dégagement au-dessus de la pièce.</td><td>50 mm</td></tr>
+    <tr><td>Rayon de l'outil</td><td>Rayon du disque de ponçage. Sert au dessin du disque et au calcul de la couverture.</td>
+      <td>62,5 mm (disque de 125 mm)</td></tr>
+  </table>
+  <p>Régler ces valeurs <b>avant</b> de dessiner. Si la ponceuse porte un autre disque, saisir son rayon.</p>
+  <h3>Dessiner</h3>
+  <ol>
+    <li>Cliquer sur la surface : c'est le point de départ.</li>
+    <li>Cliquer à l'endroit du point suivant : un segment droit relie les deux points. On peut aussi maintenir le
+      clic et glisser pour voir le segment avant de relâcher. Continuer ainsi, point par point. Un point hors de la
+      surface est ignoré.</li>
+    <li><b>Retour arrière</b> retire le dernier point, <b>Échap</b> efface tout le tracé. Les boutons
+      <b>Retirer le dernier</b> et <b>Effacer le tracé</b> font de même.</li>
+  </ol>
+  <p>Le chemin suit exactement les segments dessinés : Noether ne remplit pas la surface tout seul.
+  C'est à l'utilisateur de dessiner les allers-retours, comme il le ferait en apprenant les points d'un programme
+  de ponçage.</p>
+</section>
+
+<section>
+  <h2>6. Étape 3 (suite) : contrôler la couverture</h2>
+  <figure><img src="img/trace.png" alt="Tracé en serpentin sur la zone centrale">
+    <figcaption>Tracé de la grande girouette : 8 points cliqués, soit 4 bandes horizontales reliées par 3 descentes,
+    espacées d'environ 100 mm. <span class="num">1</span> Départ (point vert). <span class="num">2</span> Fin (point
+    rouge). <span class="num">3</span> Zone non couverte (vert citron).</figcaption></figure>
+  <figure><img src="img/trace_status.png" alt="Couverture dans la barre d'état">
+    <figcaption>La couverture, à droite de la barre d'état.</figcaption></figure>
+  <p>Le disque de la ponceuse est dessiné en bleu autour de chaque point. Ce que le disque n'atteint pas est
+  dessiné en <b>vert citron</b>. La barre d'état donne la part couverte : ici <b>85,9 %</b> de la surface, avec
+  1089 cm² non couverts, surtout aux deux bouts et le long du bord haut. La mesure se met à jour après chaque point.</p>
+  <h3>Règles pour dessiner le serpentin</h3>
+  <ul>
+    <li><b>Écart entre deux bandes</b> = diamètre du disque moins le recouvrement voulu.
+      Avec un disque de 125 mm et 25 mm de recouvrement : 100 mm, comme ici.</li>
+    <li><b>Distance au bord</b> : le centre du disque doit passer à moins d'un rayon (62,5 mm) du bord pour que le bord soit poncé.</li>
+    <li><b>Contrôle</b> : chercher les zones vert citron, rapprocher le tracé de ces zones, relire la couverture.</li>
+  </ul>
+  <div class="note">Aucun seuil de couverture minimale n'est fixé à ce jour pour la cellule MBC. La valeur sera
+  donnée par l'équipe Zone 404.</div>
+</section>
+
+<section>
+  <h2>7. Étape 3 (suite) : générer la trajectoire</h2>
+  <figure><img src="img/generated.png" alt="Passe générée">
+    <figcaption><span class="num">1</span> Générer. <span class="num">2</span> La passe apparaît dans l'arbre :
+    « Passe 1 · 329 poses ».</figcaption></figure>
+  <p>Cliquer <b>Générer</b>. Chaque surface qui a un tracé donne une passe : les points du tracé tous les 20 mm,
+  un point d'approche avant le premier, un point de dégagement après le dernier. Une surface sans tracé est
+  signalée dans la barre d'état et ne donne pas de passe.</p>
+  <p>Les petits traits le long du chemin sont les repères des poses : ils montrent l'orientation de l'outil en chaque
+  point. L'outil reste perpendiculaire à la surface, et son axe X suit le sens d'avancement.</p>
+  <p>Sur la grande girouette, les 8 points cliqués donnent une passe de 329 poses.</p>
+  <div class="note">Cliquer de nouveau <b>Générer</b> recalcule la trajectoire et efface les retouches faites après la
+  génération précédente. Noether demande confirmation avant.</div>
+</section>
+
+<section>
+  <h2>8. Étape 3 (suite) : retoucher la trajectoire</h2>
+  <p>L'outil <b>Éditer les points</b> retouche la trajectoire après <b>Générer</b> : on choisit des points, puis on
+  les déplace, on les supprime ou on en ajoute entre eux. Avant Générer, le même outil retouche les points du tracé.</p>
+  <div class="row">
+    <figure class="w40"><img src="img/edit_ribbon.png" alt="Bouton Éditer les points">
+      <figcaption><span class="num">1</span> Onglet 3 Traitement, Éditer les points.</figcaption></figure>
+    <div class="text">
+      <table>
+        <tr><th style="width:38%">Geste</th><th>Effet</th></tr>
+        <tr><td>Survol d'un point</td><td>Le point s'éclaire en blanc.</td></tr>
+        <tr><td>Clic sur un point</td><td>Ce point seul est choisi, en magenta.</td></tr>
+        <tr><td>Ctrl + clic</td><td>Ajoute ou retire un point du choix.</td></tr>
+        <tr><td>Clic dans le vide, Échap</td><td>Plus aucun point choisi.</td></tr>
+        <tr><td>Glisser un point choisi</td><td>Tous les points choisis se déplacent, reposés sur la surface.</td></tr>
+        <tr><td>Suppr</td><td>Supprime les points choisis.</td></tr>
+        <tr><td>Ctrl+Z, Ctrl+Y</td><td>Annuler, rétablir.</td></tr>
+      </table>
+    </div>
+  </div>
+  <p>Après un clic, une petite barre s'ouvre au-dessus du curseur avec <b>Supprimer</b> et <b>Densifier</b> ; les mêmes
+  boutons sont dans le panneau Options. Un bouton grisé a une bulle d'aide qui dit pourquoi. Une passe garde au
+  moins 4 poses, approche et retrait compris : Supprimer est grisé avant.</p>
+  <h3>Densifier</h3>
+  <p>Ajoute des points entre deux points existants, par exemple pour suivre de plus près une courbe ou un biais.</p>
+  <div class="row">
+    <figure><img src="img/densify_points.png" alt="Choix de deux points et aperçu">
+      <figcaption><span class="num">A</span> <span class="num">B</span> Deux points de la même passe, de part et d'autre
+      de la descente en biais. Les points à ajouter s'affichent en transparence.</figcaption></figure>
+    <figure class="w30"><img src="img/densify_options.png" alt="Réglages de Densifier">
+      <figcaption><span class="num">1</span> Mode : Pas ou Nombre. <span class="num">2</span> Pas cible, 10 mm.
+      <span class="num">3</span> Densifier.</figcaption></figure>
+  </div>
+  <ol>
+    <li>Clic sur un premier point (A), puis <b>Ctrl + clic</b> sur un second (B) de la même passe. Les lettres A et B
+      s'affichent dans la vue et le tronçon entre eux est surligné.</li>
+    <li>Choisir le <b>mode</b> : <b>Pas</b> place un point au moins tous les X mm ; <b>Nombre</b> ajoute N points dans
+      chaque intervalle entre A et B.</li>
+    <li>Contrôler l'aperçu, puis cliquer <b>Densifier</b>. A et B restent choisis : on peut densifier de nouveau.</li>
+  </ol>
+  <p>Ici, la descente en biais passe d'un point tous les 20 mm à un point tous les 10 mm : 8 points sont ajoutés,
+  la passe passe de 329 à 337 poses. Les points existants ne bougent pas. Chaque point ajouté est posé sur la surface
+  de la passe, du côté de la pièce où sont A et B : il ne tombe jamais sur la face opposée d'une tôle mince.
+  <b>Ctrl+Z</b> défait toute la densification d'un coup.</p>
+</section>
+
+<section>
+  <h2>9. Étape 4 : ordonner les passes et exporter</h2>
+  <div class="row">
+    <div class="text" style="flex:1">
+      <figure><img src="img/order_ribbon.png" alt="Onglet Trajectoire">
+        <figcaption><span class="num">1</span> Onglet 4 Trajectoire, Ordre des passes.</figcaption></figure>
+      <p><b>Ordre des passes</b> fixe l'ordre dans lequel le robot exécute les passes. Avec plusieurs surfaces, choisir
+      une passe dans la liste <span class="num">2</span> et la monter ou la descendre <span class="num">3</span>.
+      <b>Supprimer</b> <span class="num">4</span> retire la passe de l'export. <b>Annuler</b> <span class="num">5</span>
+      défait la dernière retouche, <b>Rétablir</b> <span class="num">6</span> la refait.</p>
+      <p>Ici une seule surface, donc une seule passe, de 337 poses après densification.</p>
+    </div>
+    <figure class="w40"><img src="img/order_options.png" alt="Liste des passes">
+      <figcaption>Liste des passes, dans l'ordre d'exécution.</figcaption></figure>
+  </div>
+  <figure class="mid"><img src="img/export.png" alt="Fenêtre d'export">
+    <figcaption><span class="num">1</span> Exporter. <span class="num">2</span> Saisir le nom du fichier dans le champ
+    « File name », ici <code>chemin_grande_girouette.yaml</code>, puis Entrée.</figcaption></figure>
+  <p>Ranger le fichier exporté à côté du fichier de la pièce. Ne pas choisir le nom d'un fichier déjà présent
+  (par exemple le <code>.yaml</code> créé à l'ouverture du STEP) : il serait remplacé.</p>
+</section>
+
+<section>
+  <h2>10. Ce que contient le fichier exporté</h2>
+  <p><b>Exporter</b> écrit un seul fichier, <code>chemin_grande_girouette.yaml</code> : la trajectoire que le robot
+  exécute, avec les poses de chaque passe, retouches comprises.</p>
+  <h3>Les poses</h3>
+  <p>Le fichier est fait de listes imbriquées. La liste la plus interne est une passe : ses points dans l'ordre de
+  parcours. Les passes se suivent dans l'ordre d'exécution. Chaque point donne une position et une orientation dans le <b>repère de la pièce</b> (celui du fichier CAO) :</p>
+  <ul>
+    <li><code>x</code>, <code>y</code>, <code>z</code> : position en <b>mètres</b> ;</li>
+    <li><code>qw</code>, <code>qx</code>, <code>qy</code>, <code>qz</code> : orientation sous forme de quaternion,
+      une autre écriture des angles RX, RY, RZ d'un point robot. Axe Z de la pose : la normale à la surface, qui sort
+      de la pièce. Axe X : le sens d'avancement.</li>
+  </ul>
+<pre>-
+  -
+    -                               # passe 1
+      - x: 0.049771079921629283     # point d'approche, 50 mm devant la surface
+        y: -0.82768725880019733
+        z: 0.18880929511092032
+        qw: 0.5
+        qx: 0.5
+        qy: 0.5
+        qz: 0.5
+      - x: -0.00022892007837072015  # premier point de contact
+        y: -0.82768725880019733
+        z: 0.18880929511092032
+        ...
+      - x: -0.00022892007837072015  # point suivant, 20 mm plus loin en Y
+        y: -0.80768725880019732
+        ...</pre>
+  <p>Sur cet exemple, la surface regarde vers +X du repère de la pièce : l'approche est à X = +50 mm, les points de
+  contact à X = 0, et la première bande avance selon +Y par pas de 20 mm.</p>
+
+  <h3>Rouvrir une trajectoire exportée</h3>
+  <p>Ouvrir d'abord la pièce, puis onglet <b>1 Fichier</b>, <b>Reprendre un chemin</b>, et choisir le fichier exporté
+  . Ses passes remplacent celles affichées. On peut alors changer l'ordre, supprimer une passe ou des points, puis
+  <b>Exporter</b> de nouveau. Un chemin rouvert ne garde pas la surface d'où il vient : Densifier et le glisser de
+  points y sont grisés. Pour les utiliser, refaire la surface et le tracé, puis Générer.</p>
+</section>
+
+<section>
+  <h2>11. Appliquer la méthode à une autre pièce</h2>
+  <ol>
+    <li><b>Ouvrir le STEP</b> et contrôler l'étendue dans la barre d'état.</li>
+    <li><b>Orienter la vue</b> : essayer Face, Dessus, Côté, et garder la vue qui montre la zone à poncer bien en face.</li>
+    <li><b>Choisir la zone</b> avec Région. Si elle déborde ou s'arrête trop tôt, ajuster l'angle de planéité.
+      Pour une zone sans arête nette, utiliser la Brosse ou le Polygone. Une zone en plusieurs morceaux donne
+      plusieurs surfaces, donc plusieurs passes.</li>
+    <li><b>Régler l'outil</b> : rayon du disque monté, pas, hauteur d'approche.</li>
+    <li><b>Dessiner le serpentin</b> : bandes parallèles au plus grand côté de la zone, écart = diamètre moins
+      recouvrement, centre du disque à moins d'un rayon des bords.</li>
+    <li><b>Lire la couverture</b> et reprendre les points près des zones vert citron.</li>
+    <li><b>Générer</b>, retoucher si besoin avec <b>Éditer les points</b>, <b>ordonner</b> les passes, <b>exporter</b>.</li>
+  </ol>
+  <h3>Problèmes courants</h3>
+  <table>
+    <tr><th style="width:30%">Situation</th><th style="width:32%">Cause</th><th>Que faire</th></tr>
+    <tr><td>Le fichier n'apparaît pas à l'ouverture</td><td>Fichier hors du dossier personnel</td>
+      <td>Copier la pièce dans le dossier personnel.</td></tr>
+    <tr><td>Un STEP est refusé, ou Noether ne démarre pas (« Fichier de configuration absent »)</td><td>Réglage de conversion du poste absent ou invalide</td>
+      <td>Prévenir l'équipe Zone 404.</td></tr>
+    <tr><td>Pièce mille fois trop grande</td><td>PLY ou STL en millimètres</td><td>Ouvrir le STEP à la place.</td></tr>
+    <tr><td>« Valider la surface » refusé</td><td>Sélection en plusieurs morceaux</td>
+      <td>Valider chaque morceau séparément.</td></tr>
+    <tr><td>Le clic ne pose pas le départ du tracé</td><td>Aucune surface choisie dans l'arbre, ou clic hors de la surface</td>
+      <td>Choisir la surface dans l'arbre, puis cliquer dessus.</td></tr>
+    <tr><td>La vue ne tourne plus</td><td>Un outil se sert du clic gauche</td><td>Tourner au clic droit, ou avec Alt.</td></tr>
+    <tr><td>Densifier grisé</td><td>Pas deux points d'une même passe ; chemin rouvert, sans surface ; aucun intervalle plus long que le pas</td>
+      <td>Lire la bulle d'aide du bouton. Pour un chemin rouvert, régénérer depuis la pièce.</td></tr>
+  </table>
+  <h3>Avant d'exporter, vérifier</h3>
+  <ol>
+    <li>L'étendue de la pièce dans la barre d'état.</li>
+    <li>Que chaque surface de l'arbre a un tracé.</li>
+    <li>La couverture, et les zones vert citron restantes.</li>
+    <li>L'ordre des passes dans l'onglet Trajectoire.</li>
+  </ol>
+</section>
+
+</body>
+</html>
