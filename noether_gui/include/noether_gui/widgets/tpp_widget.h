@@ -52,7 +52,7 @@ class vtkPropAssembly;
 class vtkPolyData;
 class vtkActor2D;
 class vtkCellLocator;
-class vtkBillboardTextActor3D;
+class vtkTextActor;
 class vtkAnnotatedCubeActor;
 class QFrame;
 class QSpinBox;
@@ -559,6 +559,8 @@ protected:
   void updatePointMarkers();
   /** @brief Points que Densifier ajouterait, troncon de A a B surligne, lettres A et B */
   void updateDensifyPreview();
+  /** @brief Lettre A ou B en surimpression, a cote d'une pose, lisible au-dessus des disques */
+  vtkSmartPointer<vtkTextActor> densifyLabel(const std::string& letter, const Eigen::Vector3d& pose);
   /** @brief Lettres A et B a cote des deux bouts du troncon */
   void updateDensifyLabels(const std::vector<Eigen::Vector3d>& span);
 
@@ -952,7 +954,7 @@ protected:
   /** @brief Troncon de A a B surligne */
   vtkSmartPointer<vtkActor> densify_span_actor_;
   /** @brief Lettres A et B dans la vue */
-  std::vector<vtkSmartPointer<vtkBillboardTextActor3D>> densify_labels_;
+  std::vector<vtkSmartPointer<vtkTextActor>> densify_labels_;
   /** @brief Renderer du cube, dessine par-dessus la vue, sans interaction propre */
   vtkSmartPointer<vtkRenderer> view_cube_renderer_;
   /** @brief Cube a faces nommees */

@@ -678,8 +678,8 @@ citron (zones non couvertes).
 
 Les actions s'offrent à trois endroits, comme dans SolidWorks :
 - le **raccourci** clavier ;
-- une **barre contextuelle**, qui apparaît près du curseur après un clic ou un Ctrl + clic
-  qui laisse une sélection non vide, toujours entière dans la vue. Elle disparaît au clic
+- une **barre contextuelle**, qui apparaît au-dessus et à droite du curseur après un clic ou un Ctrl + clic
+  qui laisse une sélection non vide, toujours entière dans la vue. En dessous, elle couvrirait le point suivant d'une passe qui descend, et un Ctrl + clic sur ce point tomberait sur un bouton. Elle disparaît au clic
   suivant hors d'elle, au début d'un glisser, sur Échap, ou quand la sélection se vide.
   Écart assumé : dans SolidWorks, elle s'estompe aussi quand le curseur s'éloigne ; ce
   comportement n'est pas repris, il demanderait une distance de plus à régler ;

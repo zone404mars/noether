@@ -34,12 +34,13 @@
 #include <QVBoxLayout>
 #include <QVTKOpenGLNativeWidget.h>
 #include <vtkActor.h>
-#include <vtkBillboardTextActor3D.h>
+#include <vtkCoordinate.h>
 #include <vtkCellArray.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
+#include <vtkTextActor.h>
 #include <vtkTextProperty.h>
 
 namespace noether
@@ -49,7 +50,7 @@ namespace
 /** @brief Couleur de pre-selection (§19.4) */
 constexpr unsigned char kHoverRgb[3] = { 255, 255, 255 };
 /** @brief Opacite des points de l'apercu de Densifier : ils ne sont pas encore dans le chemin */
-constexpr double kPreviewOpacity = 0.4;
+constexpr double kPreviewOpacity = 0.6;
 /** @brief Decalage, en pixels logiques, entre le curseur et le coin de la barre contextuelle */
 constexpr int kBarOffsetPx = 12;
 
@@ -185,8 +186,10 @@ void TPPWidget::showContextBar(const Eigen::Vector2d& display)
   context_bar_->adjustSize();
   // Les positions VTK sont en pixels physiques, origine en bas ; Qt en pixels logiques, origine en haut
   const double ratio = render_widget_->devicePixelRatioF();
+  // Au-dessus et a droite du curseur, comme dans SolidWorks : en dessous, la barre couvrirait
+  // le point suivant d'une passe qui descend, et un Ctrl + clic tomberait sur Supprimer
   int x = static_cast<int>(display.x() / ratio) + kBarOffsetPx;
-  int y = render_widget_->height() - static_cast<int>(display.y() / ratio) + kBarOffsetPx;
+  int y = render_widget_->height() - static_cast<int>(display.y() / ratio) - kBarOffsetPx - context_bar_->height();
   // Toujours entiere dans la vue (§19.5)
   x = std::max(0, std::min(x, render_widget_->width() - context_bar_->width()));
   y = std::max(0, std::min(y, render_widget_->height() - context_bar_->height()));
@@ -334,29 +337,46 @@ std::vector<Eigen::Vector3d> TPPWidget::densifySpan() const
   return span;
 }
 
+vtkSmartPointer<vtkTextActor> TPPWidget::densifyLabel(const std::string& letter, const Eigen::Vector3d& pose)
+{
+  auto label = vtkSmartPointer<vtkTextActor>::New();
+  label->SetInput(letter.c_str());
+  // Position en pixels, relative au point projete de la pose ; a gauche, la barre contextuelle s'ouvrant a droite
+  auto anchor = vtkSmartPointer<vtkCoordinate>::New();
+  anchor->SetCoordinateSystemToWorld();
+  anchor->SetValue(pose.x(), pose.y(), pose.z());
+  label->GetPositionCoordinate()->SetCoordinateSystemToDisplay();
+  label->GetPositionCoordinate()->SetReferenceCoordinate(anchor);
+  label->GetPositionCoordinate()->SetValue(-34.0, -12.0);
+  vtkTextProperty* text = label->GetTextProperty();
+  text->SetFontSize(20);
+  text->SetBold(true);
+  text->SetColor(1.0, 1.0, 1.0);
+  text->SetBackgroundColor(0.1, 0.1, 0.12);
+  text->SetBackgroundOpacity(0.8);
+  text->SetFrame(true);
+  text->SetFrameColor(kGrabRgb[0] / 255.0, kGrabRgb[1] / 255.0, kGrabRgb[2] / 255.0);
+  return label;
+}
+
 void TPPWidget::updateDensifyLabels(const std::vector<Eigen::Vector3d>& span)
 {
-  for (const vtkSmartPointer<vtkBillboardTextActor3D>& label : densify_labels_)
+  for (const vtkSmartPointer<vtkTextActor>& label : densify_labels_)
   {
-    renderer_->RemoveActor(label);
+    renderer_->RemoveActor2D(label);
   }
   densify_labels_.clear();
   if (span.size() < 2)
   {
     return;
   }
-  // Les lettres A et B sont ecrites a cote des deux poses (§21)
+  // Les lettres A et B sont ecrites a cote des deux poses (§21), en surimpression 2D : dessinees
+  // dans la scene, elles passeraient sous les disques transparents
   const std::pair<std::string, Eigen::Vector3d> ends[] = { { "A", span.front() }, { "B", span.back() } };
   for (const auto& end : ends)
   {
-    auto label = vtkSmartPointer<vtkBillboardTextActor3D>::New();
-    label->SetInput(end.first.c_str());
-    label->SetPosition(end.second.x(), end.second.y(), end.second.z());
-    label->SetDisplayOffset(10, 10);
-    label->GetTextProperty()->SetFontSize(20);
-    label->GetTextProperty()->SetBold(true);
-    label->GetTextProperty()->SetColor(kGrabRgb[0] / 255.0, kGrabRgb[1] / 255.0, kGrabRgb[2] / 255.0);
-    renderer_->AddActor(label);
+    auto label = densifyLabel(end.first, end.second);
+    renderer_->AddActor2D(label);
     densify_labels_.push_back(label);
   }
 }

@@ -68,7 +68,7 @@ void TPPWidget::buildViewCube()
 void TPPWidget::buildViewCubeActor()
 {
   view_cube_actor_ = vtkSmartPointer<vtkAnnotatedCubeActor>::New();
-  view_cube_actor_->SetFaceTextScale(0.16);
+  view_cube_actor_->SetFaceTextScale(0.14);
   view_cube_actor_->GetCubeProperty()->SetColor(0.85, 0.86, 0.9);
   // Lettres pleines et sombres, sans contour : un contour vu de profil deborde du cube
   view_cube_actor_->SetTextEdgesVisibility(false);
@@ -121,6 +121,8 @@ QToolButton* TPPWidget::addViewCubeButton(const QString& symbol, const Bilingual
   button->setText(symbol);
   button->setAutoRaise(true);
   button->setFixedSize(kCubeButtonPx, kCubeButtonPx);
+  // Symbole clair : le fond de la vue est gris fonce
+  button->setStyleSheet("QToolButton { color: #e8e8ee; font-size: 14px; }");
   translator_.bindToolTip(button, tip);
   connect(button, &QToolButton::clicked, this, [action](bool) { action(); });
   return button;
