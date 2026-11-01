@@ -4,8 +4,8 @@
 **Paquets :** `noether_cad` (bibliothèque C++ et ligne de commande ; aucun en-tête ROS dans le code), `noether_gui` (application Qt/VTK `noether_gui_app`), `noether_tpp` (bibliothèque de planification de chemins d'outil)
 **Stack :** Noether 0.16.0 (ROS-Industrial), OpenCASCADE, VTK, PCL, Qt 5, yaml-cpp, Eigen
 **Langue spec :** français | **Langue code :** anglais
-**Versions :** V1 (existant), puis V1.1, V1.2… (ajouts à venir, chacun dans sa section)
-**Statut :** V1 implémentée et testée, branche `z404/open-step`, commit `2dd5dfe`
+**Versions :** V1 (existant), V1.1 (en conception), puis V1.2… (ajouts à venir, chacun dans sa section)
+**Statut :** V1 implémentée et testée, branche `z404/open-step`, commit `2dd5dfe` ; V1.1 en conception, non implémentée
 
 ---
 
@@ -47,6 +47,17 @@ ce que le code ne tranche pas, sont dans l'annexe B.
   - [14. Structure des paquets et intégration](#14-structure-des-paquets-et-intégration)
   - [15. Critères d'acceptation](#15-critères-dacceptation)
   - [16. Résumé V1 / suite](#16-résumé-v1--suite)
+- [V1.1 : en conception](#v11--en-conception)
+  - [17. Vocabulaire ajouté](#17-vocabulaire-ajouté)
+  - [18. Le chemin livré devient une liste de poses éditée](#18-le-chemin-livré-devient-une-liste-de-poses-éditée)
+  - [19. Outil « Éditer les points »](#19-outil--éditer-les-points-)
+  - [20. Supprimer des points](#20-supprimer-des-points)
+  - [21. Densifier par pas ou par nombre](#21-densifier-par-pas-ou-par-nombre)
+  - [22. Cube de navigation](#22-cube-de-navigation)
+  - [23. Matrice d'erreurs V1.1](#23-matrice-derreurs-v11)
+  - [24. Questions ouvertes V1.1](#24-questions-ouvertes-v11)
+  - [25. Critères d'acceptation V1.1](#25-critères-dacceptation-v11)
+  - [26. Ce que V1.1 remplacera dans V1](#26-ce-que-v11-remplacera-dans-v1)
 - [Annexe A : journal des décisions](#annexe-a--journal-des-décisions)
 - [Annexe B : trous connus](#annexe-b--trous-connus)
 
@@ -501,10 +512,417 @@ Tous cochés : le test nommé passe sur `2dd5dfe` plus le retrait de l'export `.
 
 | | V1 (cette section) | Suite |
 | --- | --- | --- |
-| Chemin | dessiné à la main, une passe par surface | V1.1 et suivantes, au fil des ajouts de spec |
+| Chemin | dessiné à la main, une passe par surface | inchangé en V1.1 |
+| Édition des points | Déplacer des points, Densifier par pas, recette | V1.1 : outil unique Éditer les points (sélection, suppression, densifier par pas ou par nombre), chemin livré édité en liste de poses avec Annuler et Rétablir |
+| Navigation | boutons de vues standard | V1.1 : cube de navigation en plus |
 | Couverture | mesurée et affichée, sans seuil | |
 | Retouche | appliquée au chemin exporté, recette non exportée | |
 | Occlusion, courbure, ordre départ/arrivée | codés dans `noether_tpp`, pas dans l'IHM | |
+
+---
+
+# V1.1 : en conception
+
+Statut : **en conception, non implémentée**. Rien de cette section n'existe dans le code.
+Les valeurs encore ouvertes sont listées en §24 ; tant qu'elles le sont, la section n'est
+pas figée pour l'implémentation.
+
+**Principe de V1.1 : les gestes suivent les conventions des logiciels de CAO** (SolidWorks,
+Fusion, Onshape, FreeCAD). Quand ces logiciels divergent, la règle nomme celui qui a été
+suivi ; un écart à la convention est signalé là où il se produit. *Conséquence :* un
+opérateur qui connaît un logiciel de CAO retrouve les gestes sans apprentissage ; le clic
+droit garde la rotation de la vue (§6.3), comme dans Onshape.
+
+## 17. Vocabulaire ajouté
+
+| Terme | Définition |
+| --- | --- |
+| point | ce que l'outil Éditer les points manipule : une pose de contact du chemin livré après génération, un sommet du tracé avant. Ne désigne jamais une face |
+| sélection de points | les points choisis dans Éditer les points. À distinguer de la **sélection en cours** de V1, qui est faite de faces (orange) |
+| pré-sélection | le point sous le curseur, éclairé avant tout clic |
+| action | une modification du chemin livré ou du tracé qu'Annuler défait en une fois. Un changement de sélection n'est pas une action |
+| écart | l'espace entre deux poses de contact voisines du chemin livré tel qu'il est au moment de la commande. L'approche et le retrait ne bordent aucun écart |
+| face du cube | une des six faces du cube de navigation (§21). Sans rapport avec une face du maillage ou une face CAO |
+
+## 18. Le chemin livré devient une liste de poses éditée
+
+Remplace, pour l'IHM, la recette de §9.4 (N19).
+
+- Après génération, le chemin livré est une liste de passes, chaque passe une liste de
+  poses. Déplacer, supprimer, densifier, réordonner et supprimer une passe modifient
+  directement cette liste.
+- Une pose ajoutée par Densifier devient une pose comme les autres : elle se sélectionne,
+  se déplace, se supprime, et borde des écarts.
+- **Annuler** (bouton de l'onglet Trajectoire, Ctrl+Z) et **Rétablir** (Ctrl+Y) parcourent
+  une seule pile de copies de cette liste. Une nouvelle action après un Annuler vide la
+  pile de Rétablir.
+- Avant génération, le tracé de chaque surface a sa propre pile, de la même forme.
+- Une nouvelle génération et **Reprendre un chemin** vident les piles.
+- Annuler et Rétablir vident la sélection de points, comme dans SolidWorks.
+- Le chemin livré est **modifié** dès qu'une action a été faite depuis la dernière
+  génération ou le dernier Reprendre un chemin. Ce drapeau remplace la « retouche » de V1 :
+  une nouvelle génération demande confirmation quand le chemin est modifié (règle de §8,
+  Non par défaut), puisqu'elle perd ces modifications.
+- **Exporter** reste refusé si une passe a moins de 4 poses (§11.1). Ce cas ne peut plus
+  venir d'une suppression (§20), mais le contrôle reste comme garde.
+
+La recette (`tool_path_recipe`) reste dans `noether_tpp` avec ses tests ; l'IHM ne s'en
+sert plus. Le chemin exporté (§11.1) ne change pas de format.
+
+## 19. Outil « Éditer les points »
+
+Remplace les outils **Déplacer des points** (§9.1) et **Densifier** (§9.2) dans l'onglet
+Traitement, à la place qu'occupait Déplacer des points. Comme eux, c'est un mode
+temporaire (§6.2) : il rend la souris au dernier outil de sélection dans les mêmes cas.
+En le quittant, la sélection de points se vide, la barre contextuelle et l'aperçu
+disparaissent.
+
+### 19.1 Ce qui s'édite
+
+| Situation | Points éditables |
+| --- | --- |
+| une génération existe | les poses de contact du chemin livré, poses ajoutées comprises. L'approche et le retrait ne s'éditent pas et ne se saisissent pas |
+| aucune génération | les sommets du tracé de la surface courante de l'arbre. Changer de surface courante vide la sélection |
+
+Changer le tracé quand une génération existe demande de régénérer (§8).
+
+### 19.2 Saisir un point
+
+Le point saisi est **le point éditable visible le plus proche du curseur à l'écran, à moins
+de 10 pixels logiques** (N21), c'est-à-dire en unités Qt indépendantes de la densité de
+l'écran. Au-delà de 10 pixels de tout point, le clic tombe **dans le vide**.
+
+Un point est **visible** quand le segment qui va de la caméra au point ne rencontre pas la
+pièce à plus de 1 mm avant lui. Un point caché ne se pré-sélectionne pas et ne se saisit
+pas.
+
+Un appui suivi d'un relâchement est un **clic** quand la souris a bougé de moins que la
+distance de glisser du système (`QApplication::startDragDistance`), sinon c'est un
+**glisser**.
+
+### 19.3 Gestes
+
+| Geste | Effet | Convention suivie |
+| --- | --- | --- |
+| survol | le point saisissable sous le curseur est dessiné en pré-sélection | toutes |
+| clic sur un point | la sélection devient ce seul point | toutes |
+| Ctrl + clic sur un point | le point est ajouté à la sélection, ou retiré s'il y était | SolidWorks, Fusion |
+| clic dans le vide, Échap | la sélection se vide | toutes |
+| Ctrl + clic dans le vide | rien | SolidWorks |
+| glisser un point non sélectionné | la sélection devient ce point, qui se déplace | toutes |
+| glisser un point sélectionné | **tous les points sélectionnés** se déplacent (N20) | toutes |
+| Suppr | supprime les points sélectionnés (§20) | toutes |
+| Ctrl+Z, Ctrl+Y | Annuler, Rétablir (§18) | toutes |
+| clic droit et glisser, Alt + clic gauche et glisser, molette | vue, inchangés (§6.3) | Onshape |
+
+Un glisser déplace les points ainsi :
+- le **déplacement** est le vecteur 3D entre le point de la pièce sous le curseur à l'appui
+  et le point de la pièce sous le curseur à l'instant courant. Quand le curseur sort de la
+  pièce, les points restent à leur dernière place ;
+- après génération : chaque pose sélectionnée est translatée de ce vecteur, puis posée sur
+  la surface de sa passe selon §21.1. Une pose glissée hors de sa surface se pose au point
+  de sa surface le plus proche ;
+- si la sélection contient la première ou la dernière pose de contact d'une passe,
+  l'approche ou le retrait la suit, à la même place dans son repère ;
+- avant génération : chaque sommet est translaté de ce vecteur, puis reposé sur les seules
+  faces de la surface courante, comme à Générer (§8). Un sommet n'a pas d'orientation, donc
+  pas de test « même côté » ;
+- Ctrl + glisser se comporte comme un glisser : Ctrl ne compte qu'au clic.
+
+Un glisser est une seule action. Sans pièce ouverte (chemin repris seul), le glisser ne
+fait rien et la barre d'état dit « Ouvrez la pièce du chemin » ; Suppr reste possible.
+
+Les raccourcis Suppr, Échap, Ctrl+Z et Ctrl+Y de cette section ne valent que **quand
+l'outil Éditer les points est actif et que la vue 3D a le focus**. Avec un autre outil,
+les touches gardent leur effet de V1 (Échap du Polygone et du Tracé manuel), et Ctrl+Z,
+Ctrl+Y ne font rien dans la vue. Dans l'arbre ou la liste des passes, Suppr garde son
+effet de V1.
+
+### 19.4 Couleurs
+
+Pré-sélection en blanc. Sélection en magenta (`kGrabRgb`, la couleur de saisie de V1).
+Les deux restent distinctes de l'orange (sélection de faces), du cyan (disques) et du vert
+citron (zones non couvertes).
+
+### 19.5 Actions sur la sélection
+
+Les actions s'offrent à trois endroits, comme dans SolidWorks :
+- le **raccourci** clavier ;
+- une **barre contextuelle**, qui apparaît près du curseur après un clic ou un Ctrl + clic
+  qui laisse une sélection non vide, toujours entière dans la vue. Elle disparaît au clic
+  suivant hors d'elle, au début d'un glisser, sur Échap, ou quand la sélection se vide.
+  Écart assumé : dans SolidWorks, elle s'estompe aussi quand le curseur s'éloigne ; ce
+  comportement n'est pas repris, il demanderait une distance de plus à régler ;
+- le **panneau Options**, qui montre la sélection : nombre de points, et pour un point
+  seul sa passe, son rang et sa position.
+
+| Action | Raccourci | Disponible quand |
+| --- | --- | --- |
+| Supprimer | Suppr | sélection non vide, et règles de §20 tenues |
+| Densifier | aucun | génération existante, pièce ouverte, exactement deux poses de la même passe sélectionnées, passe à surface connue (§21.1) |
+
+Une action indisponible est grisée, avec une bulle d'aide qui dit pourquoi.
+
+## 20. Supprimer des points
+
+### 20.1 Après génération
+
+- Les poses sélectionnées disparaissent du chemin livré. Les autres poses gardent leur
+  position, leur orientation et leur ordre, sauf ce que les deux règles suivantes changent.
+- **Axe x de la pose de contact qui précède une pose supprimée** : recalculé vers sa
+  nouvelle suivante de contact, z et position inchangés, même si cette pose avait été
+  déplacée à la main (N15). Si la nouvelle suivante est dans l'axe z, x est pris dans un
+  axe quelconque du plan, comme `traceFrame`. Si la pose supprimée était la dernière de
+  contact, la nouvelle dernière prend le sens de son dernier tronçon, comme `tracePoses`.
+- **Approche et retrait** : si la première ou la dernière pose de contact est supprimée,
+  l'approche ou le retrait est replacé devant la nouvelle, à la même place dans son repère
+  qu'avant, comme pour un glisser (§19.3). La valeur courante du champ hauteur
+  d'approche n'intervient pas.
+- Une passe garde au moins 4 poses, approche et retrait compris. Si la suppression ferait
+  passer **une** des passes concernées sous ce nombre, Supprimer est grisé pour toute la
+  sélection, et la bulle d'aide nomme la passe en cause.
+- L'outil va en ligne droite de la pose d'avant à la pose d'après ; la couverture
+  recalculée (§10) montre le trou éventuel.
+- Une suppression est une seule action, quel que soit le nombre de poses. La sélection se
+  vide.
+
+### 20.2 Avant génération
+
+- Les sommets sélectionnés disparaissent du tracé, y compris au milieu ; la polyligne relie
+  le sommet d'avant au sommet d'après.
+- Supprimer est grisé si le tracé garderait moins de 2 sommets, minimum de Générer (§8).
+- Une suppression est une seule action de la pile du tracé.
+- Retour arrière et Échap gardent leur effet de V1 pendant le Tracé manuel (§8) : les deux
+  outils s'excluent, il n'y a pas de conflit.
+
+## 21. Densifier par pas ou par nombre
+
+Remplace la procédure de §9.2. La commande s'applique entre les deux poses sélectionnées ;
+A est la première dans le sens de la passe, B la seconde.
+
+| Mode | Réglage | Valeur à l'ouverture | Bornes | Points ajoutés dans un écart de longueur L |
+| --- | --- | --- | --- | --- |
+| Pas | pas cible | 10 mm (V1) | 1 à 1 000 mm (V1) | `ceil(L / pas) - 1` |
+| Nombre | N, champ entier (pas de saisie décimale possible) | 1 | 1 à 100 | N |
+
+Le mode à l'ouverture est **Pas**. Une saisie hors bornes est ramenée à la borne par le
+champ, comme les autres champs de l'IHM.
+
+Règles :
+- chaque écart de A à B est traité seul ; L est la distance en ligne droite entre ses deux
+  poses ; les points y sont répartis régulièrement sur cette droite, **puis** posés sur la
+  surface de la passe selon §21.1 ;
+- les poses existantes ne bougent pas ;
+- densifier de nouveau découpe les écarts tels qu'ils sont devenus (N19) : il n'y a plus
+  de remplacement des points ajoutés ;
+- une densification est une seule action.
+
+**Aperçu.** Tant que A et B sont sélectionnées, les points qui seraient ajoutés sont
+dessinés en transparence, recalculés à chaque changement de mode, de pas ou de N. Le
+tronçon de A à B est surligné, et les lettres A et B sont écrites dans la vue à côté des
+deux poses. Si l'aperçu est vide (mode Pas, aucun écart plus long que le pas), Densifier
+est grisé, avec une bulle d'aide qui le dit.
+
+**Après Densifier**, A et B restent sélectionnées et l'aperçu est recalculé sur les
+nouveaux écarts.
+
+### 21.1 Poser un point sur la pièce
+
+Un point ajouté par Densifier, ou une pose déplacée par un glisser (§19.3), se pose sur
+**la surface de sa passe** : les faces de la surface validée qui a donné la passe, gardées
+telles qu'elles étaient au moment de Générer. Jamais sur le maillage entier.
+
+1. **Point de départ.** Pour Densifier, le point réparti sur la droite de l'écart. Pour
+   un glisser, la pose translatée du déplacement.
+2. **Normale attendue.** Pour Densifier, interpolée entre les axes z des deux poses de
+   l'écart traité, selon la position du point sur la droite (interpolation sphérique). Si
+   ces deux axes sont opposés, l'interpolation n'est pas définie et l'écart est sauté.
+   Pour un glisser, c'est l'axe z de la pose avant le glisser.
+3. **Point retenu.** Le point le plus proche du point de départ, pris sur les triangles de
+   la surface de la passe dont la normale plane est du même côté que la normale attendue
+   (produit scalaire strictement positif).
+4. **Orientation.** z prend la normale plane de ce triangle. Pour Densifier, x suit la
+   direction de l'écart, de la pose précédente vers la suivante, rendue orthogonale à z.
+   Pour un glisser, x garde le sens de marche de la pose, rendu orthogonal à z.
+
+**Pourquoi la surface de la passe (étapes 1 et 3).** Sur une tôle de 3 mm dont la peau
+extérieure est cintrée à un rayon de 20 mm, la droite entre deux poses distantes de 20 mm passe à 2,7 mm sous la peau
+extérieure, plus loin que la demi-épaisseur. La face la plus proche du maillage entier est
+alors la peau intérieure, et le point est posé sous la pièce. C'est le défaut de V1,
+constaté sur une pièce réelle (annexe B).
+
+**Pourquoi le test « même côté » (étape 3).** La surface validée peut contenir les deux
+peaux : une Brosse ou un Polygone qui déborde par la tranche d'une tôle, ou une Région qui
+fait le tour d'une courbure lente (annexe B). Le test écarte alors la peau opposée.
+
+Ces étapes ne demandent aucun réglage : ni seuil d'angle, ni distance de recherche. Reste
+hors d'atteinte un détail de la pièce plus petit que l'écart (dentelure, clip) : le point
+se pose sur une face extérieure du détail, mais pas forcément entre les deux poses.
+L'opérateur réduit alors le pas.
+
+**Point sans triangle valable.** Densifier saute tout l'écart qui contient ce point, pour
+ne pas laisser un écart à moitié densifié ; l'aperçu n'y montre rien. Un glisser laisse la
+pose à sa place d'avant le glisser.
+
+**Passe sans surface.** Une passe reprise depuis un fichier YAML n'a pas de surface : elle
+ne se densifie pas et ses poses ne se glissent pas (§23, N23).
+
+## 22. Cube de navigation
+
+Un cube d'orientation est dessiné **en haut à droite** de la vue 3D, comme dans Autodesk
+(ViewCube), FreeCAD et Onshape. Il tourne avec la caméra.
+
+**Zones de clic.** Chaque face du cube est découpée en 3 × 3 cases, comme le ViewCube :
+la case centrale désigne la face, une case de bord l'arête, une case d'angle le coin.
+
+| Geste sur le cube | Effet | Convention suivie |
+| --- | --- | --- |
+| clic sur une face (6) | caméra placée sur l'axe de cette face | toutes |
+| clic sur une arête (12) | caméra placée sur la bissectrice des deux faces | Autodesk, FreeCAD, Onshape |
+| clic sur un coin (8) | caméra placée sur la diagonale du coin | Autodesk, FreeCAD, Onshape |
+| glisser le cube | rotation libre de la vue, sans recadrage | Autodesk, Onshape |
+| clic droit, molette | transmis à la vue (§6.3) | |
+| appui sur le cube pendant un glisser d'outil ou de vue déjà commencé | ignoré | |
+| bouton maison | caméra en (1, −1, 1), haut +Z, recadrée : la vue Isométrique de V1 | Autodesk, FreeCAD |
+
+**Haut de l'écran.** +Z pour toute vue, sauf quand l'axe de vue est à moins de 1° de ±Z :
+alors +Y, comme le bouton Dessus de V1.
+
+**Flèches.** Quand l'axe de vue est à moins de 1° de l'axe d'une face du cube :
+- quatre flèches triangulaires, en haut, en bas, à gauche et à droite du cube : chacune
+  amène la vue sur la face voisine située de ce côté de l'écran ;
+- deux flèches courbes : rotation de 90° autour de l'axe de vue, l'une dans le sens horaire
+  à l'écran, l'autre dans le sens inverse.
+
+Après un clic (face, arête, coin, flèche, maison), la vue est recadrée sur la pièce, comme
+les boutons de V1. Les boutons de vues standard de l'onglet Affichage restent.
+
+**Libellés des faces**, traduits avec la langue de l'IHM. La direction est le côté où se
+place la caméra, dans le repère du maillage :
+
+| Face du cube | Caméra placée côté | Vue V1 équivalente |
+| --- | --- | --- |
+| Face (−Y) | −Y | Face |
+| Arrière (+Y) | +Y | |
+| Droite (+X) | +X | Côté |
+| Gauche (−X) | −X | |
+| Dessus (+Z) | +Z | Dessus |
+| Dessous (−Z) | −Z | |
+
+Réalisation prévue : `vtkAnnotatedCubeActor` dans un `vtkOrientationMarkerWidget`, avec
+la détection des clics et les flèches écrites dans le fork. `vtkCameraOrientationWidget`
+(VTK 9.1) est écarté : il donne des axes cliquables, pas de faces, d'arêtes ni de coins.
+
+## 23. Matrice d'erreurs V1.1
+
+| Situation | Réaction |
+| --- | --- |
+| Supprimer ferait passer une passe sous 4 poses | action grisée, bulle d'aide qui nomme la passe |
+| Supprimer laisserait moins de 2 sommets au tracé | action grisée, bulle d'aide qui le dit |
+| Densifier sans génération, sans pièce, sur une passe sans surface, ou avec une sélection autre que deux poses d'une même passe | action grisée, bulle d'aide qui dit laquelle des conditions manque |
+| Densifier avec un aperçu vide | action grisée, bulle d'aide qui le dit |
+| Glisser sans pièce ouverte | rien ne bouge, message dans la barre d'état |
+| Glisser une pose d'une passe sans surface (chemin repris), pièce ouverte | rien ne bouge, message « Surface inconnue pour cette passe (chemin repris) » ; sans pièce, la ligne précédente s'applique |
+| Densifier : un écart sans triangle valable, ou aux axes z opposés (§21.1) | cet écart est sauté, les autres sont densifiés ; la barre d'état donne le nombre d'écarts sautés ; si tous le sont, l'aperçu est vide et Densifier grisé |
+| Glisser : pas de triangle valable pour une pose | la pose reste à sa place d'avant le glisser |
+| Pas ou N hors bornes | ramené à la borne par le champ |
+| Appui sur le cube pendant un glisser déjà commencé | ignoré |
+
+## 24. Questions ouvertes V1.1
+
+| Question | État |
+| --- | --- |
+| Borne haute de N (100) | validée par l'utilisateur le 31/10/2026 |
+| Tolérance d'angle (1°) pour « vue sur une face » et pour le haut d'écran | validée par l'utilisateur le 31/10/2026 |
+| Couleur de pré-sélection (blanc) | validée par l'utilisateur le 31/10/2026, à revoir si elle se lit mal à l'écran |
+| Marge de visibilité d'un point (1 mm) | validée par l'utilisateur le 31/10/2026 |
+| Transition animée au clic sur le cube, comme le ViewCube | non prévue en V1.1 |
+| Version de VTK du build Windows, pour `vtkAnnotatedCubeActor` | à vérifier |
+
+## 25. Critères d'acceptation V1.1
+
+### Sélection et saisie
+- [ ] Clic à 5 pixels d'une pose visible → elle seule est sélectionnée
+- [ ] Clic à 15 pixels de toute pose → sélection vide
+- [ ] Deux poses à moins de 10 pixels du curseur → la plus proche à l'écran est saisie
+- [ ] Pose dont le segment caméra → pose rencontre la pièce à 5 mm avant elle → ni pré-sélectionnée ni saisie
+- [ ] Survol d'une pose visible à moins de 10 pixels → dessinée en pré-sélection ; curseur éloigné → dessin normal
+- [ ] Ctrl + clic sur une pose non sélectionnée → ajoutée ; sur une pose sélectionnée → retirée
+- [ ] Ctrl + clic dans le vide → sélection inchangée
+- [ ] `startDragDistance` fixé à 10 dans le test, appui et relâchement à 5 pixels → clic, aucune pose ne bouge ; à 15 pixels → glisser
+- [ ] Glisser une pose parmi trois sélectionnées → les trois se déplacent du même vecteur, chacune reposée sur la pièce
+- [ ] Glisser une pose non sélectionnée alors que deux autres le sont → elle seule bouge et devient la sélection
+- [ ] Approche ou retrait sous le curseur → non saisi
+- [ ] Glisser une sélection qui contient la première pose de contact → l'approche la suit, à la même place dans son repère
+- [ ] Curseur sorti de la pièce pendant un glisser → les poses restent à leur dernière place
+- [ ] Annuler ou Rétablir → sélection vide
+- [ ] Outil Polygone actif, Échap → le contour est effacé (V1), aucune sélection de points touchée ; Ctrl+Z → rien dans la vue
+- [ ] Nouvelle génération, Reprendre un chemin, sortie de l'outil → sélection vide
+
+### Barre contextuelle et panneau
+- [ ] Clic sur une pose → la barre apparaît près du curseur, entière dans la vue ; clic hors d'elle, début de glisser ou Échap → elle disparaît
+- [ ] Ctrl + clic qui vide la sélection → pas de barre
+- [ ] Un point sélectionné → le panneau Options montre sa passe, son rang et sa position ; trois points → « 3 points »
+- [ ] Action grisée → bulle d'aide qui dit la condition manquante
+
+### Suppression
+- [ ] Suppr sur la pose k au milieu → la passe perd cette pose, les autres gardent position et ordre
+- [ ] Suppr sur la pose k → l'axe x de la pose k−1 vise la pose k+1, son z et sa position sont inchangés
+- [ ] Suppr sur la première pose de contact → l'approche garde sa place dans le repère de la nouvelle première, même si le champ hauteur d'approche a changé
+- [ ] Suppr sur une pose ajoutée par Densifier → elle disparaît, les poses voisines restent
+- [ ] Sélection sur deux passes dont une tomberait à 3 poses → Supprimer grisé, bulle qui nomme cette passe
+- [ ] Suppr sur trois poses, Ctrl+Z → les trois reviennent ; Ctrl+Y → elles disparaissent de nouveau
+- [ ] Ctrl+Z, puis une nouvelle action, puis Ctrl+Y → rien n'est rétabli
+- [ ] Suppr avec le focus dans l'arbre → effet de V1 sur l'arbre, aucun point supprimé
+- [ ] Suppr sur un sommet du milieu du tracé → la polyligne relie ses deux voisins
+- [ ] Tracé de 2 sommets, un sommet sélectionné → Supprimer grisé
+
+### Densifier
+- [ ] Mode Nombre, N = 3, A et B voisines, écart droit de 40 mm sur un plan → 3 points ajoutés, espacés de 10 mm
+- [ ] Mode Nombre, N = 2, trois écarts de A à B → 6 points ajoutés
+- [ ] Mode Pas, écart de 20 mm, pas de 7 mm → 2 points ajoutés (règle de V1)
+- [ ] Densifier deux fois en mode Nombre, N = 1, sur un écart → 3 points dans l'écart d'origine
+- [ ] Changement de N → l'aperçu est recalculé, le chemin livré ne change pas
+- [ ] Mode Pas, aucun écart plus long que le pas → Densifier grisé
+- [ ] Sélection de trois poses → Densifier grisé
+- [ ] Après Densifier → A et B toujours sélectionnées
+- [ ] Tôle de 3 mm cintrée à un rayon intérieur de 20 mm, surface validée = peau extérieure du cintrage, A et B voisines distantes de 20 mm, N = 3 → chaque point est sur un triangle de la peau extérieure
+- [ ] Même tôle, surface validée = les deux peaux et la tranche → chaque point est sur un triangle dont la normale est du côté de A et B
+- [ ] Point ajouté → son axe z est la normale plane de son triangle, son axe x est orthogonal à z
+- [ ] Chemin repris depuis un fichier YAML, pièce ouverte → Densifier grisé, bulle d'aide qui le dit ; glisser sans effet, message en barre d'état
+- [ ] Glisser une pose vers une autre surface → elle est posée sur un triangle de sa propre surface
+
+### Cube
+- [ ] Clic sur la case centrale de « Dessus (+Z) » → même caméra que le bouton Dessus de V1
+- [ ] Clic sur une case d'angle → caméra sur la diagonale de ce coin, haut +Z
+- [ ] Clic sur la case de bord entre « Face (−Y) » et « Droite (+X) » → caméra sur (1, −1, 0), haut +Z
+- [ ] Vue de face, clic sur la flèche courbe horaire → la vue tourne de 90° dans le sens horaire ; sur la flèche anti-horaire → 90° dans l'autre sens
+- [ ] Vue « Face (−Y) », flèches triangulaires droite, gauche, haut, bas → vues « Droite (+X) », « Gauche (−X) », « Dessus (+Z) », « Dessous (−Z) »
+- [ ] Vue à 30° de toute face → aucune flèche affichée
+- [ ] Appui sur le cube pendant un glisser de pose → ignoré
+- [ ] Glisser le cube → la vue tourne, sans recadrage
+- [ ] Bouton maison → même caméra que le bouton Isométrique de V1
+- [ ] Changement de langue → libellés des faces traduits
+
+## 26. Ce que V1.1 remplacera dans V1
+
+À l'implémentation, ces passages de V1 seront barrés avec un renvoi ici :
+
+| V1 | Remplacé par |
+| --- | --- |
+| §6.2, outils de l'onglet Traitement : Déplacer des points, Densifier | §19 |
+| §9.1 Déplacer des points, et « les poses ajoutées ne se saisissent pas » (§9.2) | §19, §18 |
+| §9.2 Densifier : procédure, remplacement des points ajoutés | §21 |
+| §9.3 Annuler sans Rétablir | §18 |
+| §9.4 Recette, pour l'IHM | §18 |
+| §8, confirmation « si le chemin porte une retouche » | §18, chemin modifié |
+| §11.1, refus d'export pour « recette incohérente » | §18 : seul reste le refus d'une passe de moins de 4 poses |
+| §13, ligne « Densifier, pièce absente : refus » | §23, action grisée |
+| §15, critère `PathEditWidget.ADensifiedPlaceIsReplacedAndANewGenerationForgetsIt` | §25, Densifier deux fois |
+| §15, critères `PathEditWidget.ReportsAPassTooShortToDeliver`, `RefusesARecipeWrittenOnAnotherGeneration`, `MovesAPoseAndUndoesTheWholeDragAtOnce` | §25 ; les tests de la recette restent dans `noether_tpp` sans être liés à l'IHM |
+| N7 | N19 |
+| §9.2, « projetées sur la face la plus proche du maillage entier » | §21.1 |
+
 
 ---
 
@@ -522,6 +940,19 @@ Tous cochés : le test nommé passe sur `2dd5dfe` plus le retrait de l'export `.
 | N8 | Les boutons retourner, souder, scinder, enchaîner et revenir sont cachés en V1 | IHM simplifiée (commit `4950dbb`) ; le code et ses tests restent |
 | N9 | Couverture mesurée sur des cellules d'un sixième du rayon, et non sur les triangles | le résultat ne doit pas dépendre de la finesse du maillage |
 | N10 | Exporter n'écrit plus `<nom>.edits.yaml` | décision utilisateur du 31/10/2026 : le fichier n'était relu par rien, et sans le tracé enregistré la recette ne se rejoue pas |
+| N11 | Les gestes de V1.1 suivent les conventions des logiciels de CAO | décision utilisateur du 31/10/2026 : un opérateur qui connaît la CAO retrouve ses gestes |
+| N12 | Le clic droit reste la rotation de la vue ; la sélection se fait au clic gauche | décision utilisateur du 31/10/2026 ; même partage que dans Onshape |
+| N13 | Déplacer des points et Densifier sont fondus dans un outil « Éditer les points » : sélectionner, puis choisir l'action | convention CAO : la commande s'applique à la sélection |
+| N14 | Actions offertes par raccourci, barre contextuelle et panneau Options | les trois existent dans SolidWorks |
+| N15 | Après suppression, l'axe x de la pose précédente est recalculé vers sa nouvelle suivante, même si elle avait été déplacée | en CAO, supprimer un sommet reconstruit la courbe à partir des sommets restants ; le sens de marche de cette pose a changé |
+| N16 | En mode Nombre, N points par écart entre poses voisines, poses existantes immobiles | garde la règle de V1 ; même lecture que la subdivision d'arêtes des mailleurs |
+| N17 | Cube de navigation en haut à droite, avec faces, arêtes, coins, flèches et maison | position et éléments du ViewCube d'Autodesk, repris par FreeCAD et Onshape |
+| N18 | Libellés du cube : nom de la vue et axe du maillage, par exemple « Dessus (+Z) » | la vue est dans le repère de la CAO, pas dans celui du robot ; le nom seul n'a de sens que si +Z est le haut |
+| N19 | En V1.1, l'IHM édite le chemin livré comme une liste de poses ; Annuler et Rétablir gardent des copies ; une pose ajoutée devient une pose ordinaire ; redensifier redécoupe les écarts | décision utilisateur du 31/10/2026 : la recette repérait les poses ajoutées par le rang de leur précédente, une suppression les aurait effacées en silence ; sans `.edits.yaml` (N10), la recette n'a plus rien à rejouer. Remplace N7 pour l'IHM |
+| N20 | Glisser un point sélectionné déplace toute la sélection | décision utilisateur du 31/10/2026 : convention CAO |
+| N21 | Un point se saisit à moins de 10 pixels du curseur à l'écran, le plus proche et visible ; clic et glisser se distinguent par `QApplication::startDragDistance` | décision utilisateur du 31/10/2026 : convention CAO ; 50 mm sur la pièce englobait plusieurs poses espacées de 10 à 20 mm |
+| N22 | Un point ajouté ou glissé se pose sur la surface de sa passe, sur une face tournée du même côté que la normale attendue ; aucun seuil d'angle | décision utilisateur du 01/11/2026 : la face la plus proche du maillage entier est la peau intérieure dès que la droite entre deux poses s'enfonce de plus d'une demi-épaisseur ; un seuil d'angle (60° essayé) dépend des pièces ; banc du 01/11/2026 hors dépôt, 36 pièces (21 tôles synthétiques, 15 pièces réelles) : aucune mauvaise peau, aucun refus ; état de l'art dans `docs/recherche/projection-points-sur-maillage.md` (à la racine du fork) |
+| N23 | Une passe sans surface connue ne se densifie pas et ne se glisse pas | revenir au maillage entier ramènerait le défaut de N22 sans le dire |
 
 ## Annexe B : trous connus
 
@@ -534,4 +965,5 @@ Tous cochés : le test nommé passe sur `2dd5dfe` plus le retrait de l'export `.
 | Configuration de pipeline `-c` | chargée dans le dock caché ; sans effet sur la génération V1 |
 | Région | compare chaque face à sa voisine, pas à la face de départ : sur une courbure lente, la région peut faire le tour de la pièce |
 | Contrôle à l'écran (§15) | pas de test automatique de la disposition ni du dessin |
+| Densifier pose sur la face la plus proche du maillage entier | constaté le 31/10/2026 sur une pièce réelle (capot de climatisation) : sur une tôle mince courbée, des points tombent sur la peau intérieure ; correction prévue en V1.1 (§21.1), non implémentée |
 | Textes non traduits | la ligne « N poses » de la liste des passes est en français seul et ne change pas de langue ; les défauts de retouche affichés à l'export viennent de `noether_tpp`, en anglais seul |
