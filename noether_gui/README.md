@@ -53,17 +53,16 @@ Leurs actions restent accessibles par les menus.
 |---|---|---|
 | 1 Fichier | Ouvrir une pièce, Reprendre un chemin | formats acceptés, finesse STEP du projet |
 | 2 Sélection | Région, Brosse, Polygone, Gomme, puis Valider la surface | angle de planéité, diamètre de la brosse |
-| 3 Traitement | Tracé manuel, Générer, puis Déplacer des points, Densifier | pas du tracé, hauteur d'approche, rayon de l'outil ; pas cible de la densification |
-| 4 Trajectoire | Ordre des passes, Exporter | liste des passes, monter, descendre, supprimer, annuler |
+| 3 Traitement | Tracé manuel, Générer, Éditer les points | pas du tracé, hauteur d'approche, rayon de l'outil ; points choisis, Supprimer, densification par pas ou par nombre |
+| 4 Trajectoire | Ordre des passes, Exporter | liste des passes, monter, descendre, supprimer, annuler, rétablir |
 | Affichage | Calques, Vues standard, Langue | calques dessinés, disques (pleins, surélévation, zones non couvertes), vues face, dessus, côté, isométrique |
 
 Les outils qui prennent la souris dans la vue s'excluent : Région, Brosse, Polygone,
-Gomme, Tracé manuel, Déplacer des points et Densifier. En choisir un relâche le précédent.
+Gomme, Tracé manuel et Éditer les points. En choisir un relâche le précédent.
 
-Un outil de sélection est toujours armé. Tracé manuel, Déplacer des points et Densifier
-sont des modes temporaires : ils rendent la souris au dernier outil de sélection quand on choisit
-un autre outil, quand on valide la disposition des points déplacés, ou quand on entre
-dans les onglets Fichier, Trajectoire ou Affichage.
+Un outil de sélection est toujours armé. Tracé manuel et Éditer les points sont des modes
+temporaires : ils rendent la souris au dernier outil de sélection quand on choisit un autre
+outil, ou quand on entre dans les onglets Fichier, Trajectoire ou Affichage.
 
 Changer d'onglet affiche la page d'options de l'onglet. Aucune action n'est lancée, à
 part ce changement d'outil de souris :
@@ -128,30 +127,51 @@ calcul.
 
 ---
 
-## 5. Densifier
+## 5. Éditer les points
 
-Outil de l'onglet Traitement, après une génération :
+Outil de l'onglet Traitement. Avant génération, il édite les sommets du tracé de la surface
+courante ; après génération, les poses de contact du chemin livré. L'approche et le retrait
+ne se saisissent pas : ils suivent la première et la dernière pose de contact.
 
-1. cliquer un premier point de contact du chemin (A), puis un second (B) sur la même passe
-   générée ;
-2. régler le pas cible dans les options ;
-3. cliquer « Densifier ».
+| geste | effet |
+|---|---|
+| survol | le point à moins de 10 px du curseur, visible, est éclairé en blanc |
+| clic | choisit ce point seul ; clic dans le vide : vide la sélection |
+| Ctrl + clic | ajoute ou retire le point |
+| glisser depuis un point | déplace les points choisis, posés sur leur surface ; un seul Annuler pour tout le glisser |
+| Suppr | supprime les points choisis |
+| Échap | vide la sélection |
+| Ctrl+Z, Ctrl+Y | annuler, rétablir |
 
-Chaque écart entre deux points voisins de A à B, plus long que le pas cible, reçoit des
-points régulièrement répartis. Les points existants ne bougent pas. Les nouveaux points sont
-posés sur la pièce (projection sur la face la plus proche du maillage entier ; près d'un
-angle vif ou sur une pièce mince, cette face peut appartenir à une surface voisine) et
-orientés comme ceux du tracé :
-axe z sur la normale, axe x dans le sens de marche. « Annuler » de la page Ordre retire
-toute la densification d'un coup. Densifier de nouveau le même écart remplace les points
-ajoutés ; un écart déjà sous le nouveau pas perd ses points ajoutés.
+Après un clic qui laisse une sélection, une barre apparaît près du curseur (Supprimer,
+Densifier). Une action indisponible est grisée ; sa bulle d'aide dit pourquoi.
 
-Densifier demande la pièce ouverte : un chemin repris sans sa pièce est refusé. Pendant
-Densifier, le glisser tourne la vue.
+**Densifier** demande deux points A et B d'une même passe générée. Chaque écart entre deux
+poses voisines de A à B reçoit des points, en mode Pas (pas cible, 10 mm par défaut) ou en
+mode Nombre (N points par écart, 1 par défaut). Un aperçu les montre avant de valider. Un
+point est posé sur la surface qui a donné la passe, sur la face la plus proche tournée du
+même côté que les deux poses voisines (spec §21.1) : il ne tombe jamais sur la face opposée
+d'une tôle mince. Un écart sans place de ce côté est sauté, et la barre d'état le dit.
 
-Les points ajoutés sont gardés tels quels dans la retouche (champ `insertions` de la
-recette). Exporter écrit le chemin avec eux ; la recette elle-même n'est pas exportée. Ils ne suivent pas un déplacement ultérieur de leurs voisins, et ne se
-saisissent pas avec Déplacer des points : pour les changer, il faut redensifier.
+Un chemin repris n'a pas de surface : ses points se suppriment, mais ne se densifient ni
+ne se déplacent.
+
+Le code est dans `src/widgets/tpp_widget_edit_points.cpp` (gestes),
+`tpp_widget_point_actions.cpp` (actions) et `tpp_widget_point_view.cpp` (panneau, barre,
+marques). La logique sans Qt est dans `point_edit`, `point_picking`, `pass_surface` et
+`edited_path`.
+
+## 5 bis. Cube de navigation
+
+En haut à droite de la vue. Clic sur une face, une arête ou un coin : la caméra se place
+sur l'axe, la bissectrice ou la diagonale, et la vue est recadrée. Glisser sur le cube :
+rotation libre. Vue alignée sur une face à moins de 1° : quatre flèches vers les faces
+voisines et deux flèches courbes (quart de tour). Le bouton maison donne la vue
+isométrique. Les libellés sont en majuscules, sans accent : le texte des faces est dessiné
+par `vtkVectorText`, qui ne connaît que l'ASCII.
+
+Code : `src/widgets/view_cube.cpp` (calcul), `src/widgets/tpp_widget_view_cube.cpp` (dessin
+et boutons).
 
 ---
 
@@ -208,12 +228,16 @@ L'étendue affichée dans la barre d'état est le contrôle d'une unité fausse.
 |---|---|
 | `noether_gui_translator_utest` | choix du texte selon la langue, liaisons rejouées, langue gardée ; onglets et outils de `ProcessRibbon`, leur traduction |
 | `noether_gui_step_import_utest` | lecture de la finesse STEP, refus des valeurs invalides, résumé de conversion dans les deux langues |
-| `noether_gui_path_edit_widget_utest` | retouches du chemin : ordre, suppression, points déplacés, points ajoutés par densification, annulation, relecture |
+| `noether_gui_path_edit_widget_utest` | panneau Ordre : monter, descendre, supprimer, annuler, rétablir, état modifié |
+| `noether_gui_pass_surface_utest` | pose d'un point sur la surface de la passe, test du même côté, tôle cintrée |
+| `noether_gui_edited_path_utest` | chemin livré édité : actions, annuler, rétablir, suppression de poses |
+| `noether_gui_point_edit_utest` | sélection, densification par pas ou par nombre, glisser, saisie à l'écran |
+| `noether_gui_view_cube_utest` | zones du cube, haut de l'écran, flèches, quart de tour, alignement à 1° |
+| `noether_gui_tpp_widget_utest` | la fenêtre complète se construit |
 | `noether_gui_trace_tool_utest` | points du tracé manuel, approche et retrait |
 | `noether_gui_outline_tool_utest` | contour du polygone |
 | `noether_gui_pipeline_direction_utest` | direction donnée au planificateur raster |
 
-La disposition de la fenêtre, le dessin des disques et la couche de couverture n'ont pas de
-test automatique : ils se vérifient à l'écran. L'application des points ajoutés et leur
-lecture et écriture dans le fichier de retouche sont testées dans noether_tpp
-(`tool_path_recipe_utest`).
+La disposition de la fenêtre, le dessin des disques, la couche de couverture, les gestes
+dans la vue et le dessin du cube n'ont pas de test automatique : ils se vérifient à
+l'écran.

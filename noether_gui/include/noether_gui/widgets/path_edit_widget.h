@@ -18,8 +18,8 @@
  */
 #pragma once
 
+#include <noether_gui/widgets/edited_path.h>
 #include <noether_gui/widgets/translator.h>
-#include <noether_tpp/core/tool_path_recipe.h>
 
 #include <QWidget>
 #include <cstddef>
@@ -34,195 +34,122 @@ class QPushButton;
 namespace noether
 {
 /**
- * @brief Panel where the operator retouches the generated tool path.
- * @details The generation is left untouched: what the operator builds here is a ::PathRecipe, and
- * the delivered passes are assembled from it on every change. Nothing but a permutation with
- * grouping and direction can be expressed, so no waypoint can be invented or moved.
- *
- * The widget owns no rendering. It reports every change through ::on_changed and lets its host
- * redraw whatever it shows.
+ * @brief Panneau ou l'operateur edite le chemin livre : ordre des passes, suppression d'une
+ * passe, Annuler et Retablir (spec §18).
+ * @details Le chemin livre est une liste de passes modifiee directement (::EditedPath). Le
+ * panneau ne dessine rien : il signale chaque changement par ::on_changed et laisse son hote
+ * redessiner.
  */
 class PathEditWidget : public QWidget
 {
 public:
   /**
-   * @param min_poses Fewest waypoints a delivered pass may carry, from the consumer's contract
-   * @param parent Parent widget
+   * @param min_poses Nombre minimal de poses d'une passe livree, approche et retrait compris
+   * @param parent Widget parent
    */
   PathEditWidget(std::size_t min_poses, QWidget* parent = nullptr);
 
-  /**
-   * @brief Takes a fresh generation. The recipe restarts from the identity and the history is lost.
-   * @param generated The generated passes, flattened
-   */
-  void setGenerated(const std::vector<ToolPathSegment>& generated);
+  /** @brief Repart d'une nouvelle generation ou d'un chemin repris : piles videes, chemin non modifie */
+  void setPasses(const std::vector<EditedPass>& passes);
 
-  /**
-   * @brief Replaces the recipe with one read from a file.
-   * @param content The recipe and the generation it was written against
-   * @param tolerance Largest position difference still counted as the same generated pass
-   * @throws std::runtime_error if the file does not describe the generation at hand, naming the
-   *         passes that differ. A recipe replayed on another generation would weld the wrong ones.
-   */
-  void applyRecipeFile(const RecipeFile& content, double tolerance);
+  /** @brief Les passes livrees, avec leur surface, dans l'ordre d'execution */
+  const std::vector<EditedPass>& editedPasses() const { return path_.passes(); }
+  /** @brief Les passes livrees, poses seules, dans l'ordre d'execution */
+  ToolPath passes() const;
+  /** @brief Vrai quand une action reste a annuler depuis la derniere generation ou reprise */
+  bool isModified() const { return path_.modified(); }
 
-  /** @brief What every delivered pass takes from the generation */
-  const PathRecipe& recipe() const { return recipe_; }
-  /** @brief The delivered passes, assembled from the recipe */
-  const ToolPath& passes() const { return passes_; }
-  /** @brief The generated passes the recipe indexes */
-  const std::vector<ToolPathSegment>& generated() const { return generated_; }
-
-  /** @brief Index of the delivered pass selected in the list, negative when none */
+  /** @brief Rang de la passe choisie dans la liste, negatif sans choix */
   int selectedPass() const;
-
   /**
-   * @brief Selects a delivered pass in the list
-   * @param row Index of the pass; out of range clears the selection
+   * @brief Choisit une passe dans la liste
+   * @param row Rang de la passe ; hors bornes, la liste n'a plus de choix
    */
   void selectPass(int row);
 
-  /** @brief Moves the selected pass up (@p delta negative) or down in the execution order */
+  /** @brief Avance (@p delta negatif) ou recule la passe choisie dans l'ordre d'execution */
   void moveSelected(int delta);
-  /** @brief Travels the selected pass the other way round, sources and their direction both */
-  void reverseSelected();
-  /** @brief Appends the selected pass to the one before it, dropping the standoff waypoints */
-  void weldSelected();
-  /**
-   * @brief Enchaine toutes les passes livrees en une seule, en partant de la selectionnee
-   * @details Voir ::chainPasses : du plus proche au plus proche, retournee quand il le faut.
-   */
-  void chainFromSelected();
-  /** @brief Splits the selected pass back into one pass per generated pass it holds */
-  void splitSelected();
-  /** @brief Drops the selected pass from the delivery */
+  /** @brief Retire la passe choisie du chemin livre */
   void removeSelected();
-  /** @brief Goes back to the recipe as it was before the last change */
+  /** @brief Defait la derniere action */
   void undo();
-  /** @brief Goes back to the generation, every pass delivered alone and in order */
-  void reset();
+  /** @brief Refait la derniere action defaite */
+  void redo();
+
+  /** @brief Voir ::EditedPath::passTooShortAfterRemoval */
+  std::optional<std::size_t> passTooShortAfterRemoval(const std::vector<PoseRef>& poses) const;
+  /** @brief Supprime des poses de contact en une action ; voir ::EditedPath::removePoses */
+  void removePoses(const std::vector<PoseRef>& poses);
+  /** @brief Insere des poses dans des ecarts en une action ; voir ::EditedPath::insertPoses */
+  void insertPoses(const std::vector<GapInsertion>& insertions);
+  /** @brief Commence un glisser : une seule action pour tous les deplacements qui suivent */
+  void beginDrag();
+  /** @brief Deplace une pose pendant un glisser, sans point d'annulation */
+  void setPose(const PoseRef& ref, const Eigen::Isometry3d& pose);
+  /** @brief Termine un glisser : la liste et les boutons sont mis a jour une fois */
+  void endDrag();
 
   /**
-   * @brief Ne garde que Monter, Descendre, Supprimer et Annuler
-   * @details Pour une IHM tout-manuel : le sens, la soudure, le degroupage et l'enchainement
-   * n'ont pas cours quand chaque passe est un trace fait a la main.
-   */
-  void hideAdvancedControls();
-
-  /**
-   * @brief Lie a la langue de l'interface les textes des controles que ::hideAdvancedControls garde
+   * @brief Lie les textes du panneau a la langue de l'interface
    * @param translator Langue de l'interface ; doit vivre plus longtemps que ce widget
    */
   void bindTexts(Translator& translator);
 
-  /** @brief What forbids delivering the current recipe, one message per fault */
+  /** @brief Ce qui interdit de livrer le chemin, un message par defaut */
   std::vector<std::string> faults() const;
 
-  /** @brief Whether the operator has retouched anything, that is whether the recipe still
-   *         delivers every generated pass alone and in order, and no pose has been moved */
-  bool isRetouched() const;
-
-  /** @brief Poses deplacees a la main, dans l'ordre ou elles l'ont ete */
-  const std::vector<PoseMove>& moves() const { return moves_; }
-  /** @brief La generation avec les poses deplacees : ce que la recette assemble */
-  std::vector<ToolPathSegment> movedGenerated() const;
-  /**
-   * @brief Memorise l'etat courant pour Annuler, avant une suite de deplacements
-   * @details Un tirage a la souris deplace la meme pose des dizaines de fois : un seul point
-   * d'annulation pour tout le tirage, pris ici avant le premier deplacement.
-   */
-  void beginPoseMoves();
-  /**
-   * @brief Deplace une pose de la generation, sans point d'annulation
-   * @details Remplace un deplacement anterieur de la meme pose. Voir ::beginPoseMoves.
-   */
-  void movePose(const PoseMove& move);
-  /** @brief Poses ajoutees par densification, dans l'ordre ou elles l'ont ete */
-  const std::vector<PoseInsertion>& insertions() const { return insertions_; }
-  /**
-   * @brief Ajoute des poses entre des poses voisines de la generation, avec un point d'annulation
-   * @details Une insertion a une place deja densifiee remplace l'ancienne ; une insertion vide
-   * efface seulement ce qui y avait ete ajoute. Les poses ajoutees ne se deplacent pas a la souris :
-   * seules les poses de la generation se saisissent.
-   */
-  void insertPoses(const std::vector<PoseInsertion>& insertions);
-
-  /** @brief Called after every change to the recipe */
+  /** @brief Appele apres chaque changement du chemin livre */
   std::function<void()> on_changed;
-
   /**
-   * @brief Called when the operator picks another pass in the list
-   * @details Kept apart from ::on_changed because the recipe has not moved: a host that rebuilds
-   * one actor per waypoint has no reason to do it again just because the selection moved.
+   * @brief Appele quand les rangs des poses ne designent plus les memes poses : nouvelles passes,
+   * Annuler, Retablir, Monter, Descendre, Supprimer une passe. Appele avant ::on_changed.
+   */
+  std::function<void()> on_poses_renumbered;
+  /**
+   * @brief Appele quand l'operateur choisit une autre passe dans la liste
+   * @details A part de ::on_changed : le chemin n'a pas change, l'hote n'a pas a tout redessiner.
    */
   std::function<void()> on_selection_changed;
 
 protected:
-  /** @brief Stores the current recipe so the next change can be undone */
-  void remember();
-  /** @brief Reassembles the passes, rebuilds the list, and reports the change */
+  /** @brief Reconstruit la liste, met a jour les boutons et previent l'hote */
   void refresh(int row_to_select);
-  /** @brief Refreshes what the buttons allow and what the readings say */
-  void updateReadings();
-  /** @brief Enables only the operations the current selection admits */
-  void updateButtons();
-  /** @brief Refreshes the weld reading and the fault reading */
-  void updateLabels();
-  /** @brief The joint that welding pass @p row onto the one before it would create */
-  QString describeWeld(int row) const;
-  /** @brief One list row: rank, the generated passes it takes, and its waypoint count */
-  QString describePass(std::size_t index) const;
-
-  /** @brief Builds the buttons; called once from the constructor */
-  void buildControls();
-  /** @brief Wires every button to the operation it drives */
-  void connectControls();
-  /** @brief Rewrites the list of delivered passes and restores a selection on it */
+  /** @brief Appelle ::on_poses_renumbered s'il est branche */
+  void notifyRenumbered();
+  /** @brief Reecrit la liste des passes et y retablit un choix */
   void rebuildPassList(int row_to_select);
+  /** @brief Active seulement les boutons que le choix courant permet, et ecrit les defauts */
+  void updateReadings();
+  /** @brief Une ligne de la liste : rang et nombre de poses */
+  QString describePass(std::size_t index) const;
+  /** @brief Texte dans la langue de l'interface ; en francais sans ::bindTexts */
+  QString say(const QString& french, const QString& english) const;
+  /** @brief Construit les boutons ; appele une fois par le constructeur */
+  void buildControls();
 
-  /** @brief Fewest waypoints a delivered pass may carry, from the consumer's contract */
+  /** @brief Nombre minimal de poses d'une passe livree, approche et retrait compris */
   std::size_t min_poses_;
-  /** @brief The generated passes, flattened, as the last planning produced them */
-  std::vector<ToolPathSegment> generated_;
-  /** @brief What every delivered pass takes from the generation */
-  PathRecipe recipe_;
-  /** @brief Poses de la generation deplacees a la main */
-  std::vector<PoseMove> moves_;
-  /** @brief Poses ajoutees par densification */
-  std::vector<PoseInsertion> insertions_;
-  /** @brief The delivered passes, reassembled after every change */
-  ToolPath passes_;
-  /** @brief Un etat de la retouche : la recette, les deplacements et les insertions */
-  struct EditState
-  {
-    PathRecipe recipe;
-    std::vector<PoseMove> moves;
-    std::vector<PoseInsertion> insertions;
-  };
-  /** @brief Etats tels qu'ils etaient avant chaque changement, le plus recent en dernier */
-  std::vector<EditState> history_;
+  /** @brief Le chemin livre et ses piles d'Annuler et de Retablir */
+  EditedPath path_;
 
-  /** @brief One row per delivered pass, in execution order */
+  /** @brief Une ligne par passe livree, dans l'ordre d'execution */
   QListWidget* pass_list_ = nullptr;
-  /** @brief Reading of the joint that welding the selected pass would create */
-  QLabel* weld_label_ = nullptr;
-  /** @brief Reading of what currently forbids delivering the recipe */
+  /** @brief Ce qui interdit de livrer le chemin */
   QLabel* fault_label_ = nullptr;
-
   /** @brief Titre de la liste des passes */
   QLabel* list_label_ = nullptr;
   /** @brief Langue des textes calcules, fixee par ::bindTexts ; nulle : textes en francais */
   const Translator* translator_ = nullptr;
+  /** @brief Avance la passe choisie */
   QPushButton* up_button_ = nullptr;
+  /** @brief Recule la passe choisie */
   QPushButton* down_button_ = nullptr;
-  QPushButton* reverse_button_ = nullptr;
-  QPushButton* weld_button_ = nullptr;
-  /** @brief Enchaine toutes les passes en une seule depuis la selectionnee */
-  QPushButton* chain_button_ = nullptr;
-  QPushButton* split_button_ = nullptr;
+  /** @brief Retire la passe choisie */
   QPushButton* remove_button_ = nullptr;
+  /** @brief Defait la derniere action */
   QPushButton* undo_button_ = nullptr;
-  QPushButton* reset_button_ = nullptr;
+  /** @brief Refait la derniere action defaite */
+  QPushButton* redo_button_ = nullptr;
 };
 
 }  // namespace noether

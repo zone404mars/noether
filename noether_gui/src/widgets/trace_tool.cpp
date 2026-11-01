@@ -23,27 +23,6 @@ namespace
 /** @brief Norme en dessous de laquelle deux points ou deux directions sont confondus */
 constexpr double kDegenerate = 1e-9;
 
-/// @brief Repere d'une pose : z le long de la normale, x le sens de marche rendu orthogonal a z.
-/// @param travel Sens de marche, non normalise
-/// @param normal Normale de la surface, non normalisee
-/// @return Matrice de rotation ; si le sens de marche est colineaire a la normale, x est pris
-/// dans un axe quelconque du plan, ce cas n'arrivant que sur un trace degenere
-Eigen::Matrix3d traceFrame(const Eigen::Vector3d& travel, const Eigen::Vector3d& normal)
-{
-  const Eigen::Vector3d z = normal.normalized();
-  Eigen::Vector3d x = travel - travel.dot(z) * z;
-  if (x.norm() < kDegenerate)
-  {
-    x = z.unitOrthogonal();
-  }
-  x.normalize();
-  Eigen::Matrix3d frame;
-  frame.col(0) = x;
-  frame.col(1) = z.cross(x);
-  frame.col(2) = z;
-  return frame;
-}
-
 /// @brief Pose les points d'un segment droit, au pas demande, en reportant l'arc deja parcouru.
 /// @param from Depart du segment
 /// @param to Fin du segment
@@ -75,6 +54,22 @@ void sampleChord(const Eigen::Vector3d& from,
 
 namespace noether
 {
+Eigen::Matrix3d traceFrame(const Eigen::Vector3d& travel, const Eigen::Vector3d& normal)
+{
+  const Eigen::Vector3d z = normal.normalized();
+  Eigen::Vector3d x = travel - travel.dot(z) * z;
+  if (x.norm() < kDegenerate)
+  {
+    x = z.unitOrthogonal();
+  }
+  x.normalize();
+  Eigen::Matrix3d frame;
+  frame.col(0) = x;
+  frame.col(1) = z.cross(x);
+  frame.col(2) = z;
+  return frame;
+}
+
 std::vector<Eigen::Vector3d> sampleTrace(const std::vector<Eigen::Vector3d>& vertices, const double step)
 {
   if (!(step > 0.0))

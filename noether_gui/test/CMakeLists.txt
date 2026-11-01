@@ -38,3 +38,23 @@ add_gtest_discover_tests(${PROJECT_NAME}_step_import_utest)
 add_executable(${PROJECT_NAME}_translator_utest translator_utest.cpp)
 target_link_libraries(${PROJECT_NAME}_translator_utest PRIVATE ${PROJECT_NAME} Qt5::Widgets GTest::GTest)
 add_gtest_discover_tests(${PROJECT_NAME}_translator_utest)
+
+add_executable(${PROJECT_NAME}_pass_surface_utest pass_surface_utest.cpp)
+target_link_libraries(${PROJECT_NAME}_pass_surface_utest PRIVATE ${PROJECT_NAME} GTest::GTest GTest::Main)
+add_gtest_discover_tests(${PROJECT_NAME}_pass_surface_utest)
+
+add_executable(${PROJECT_NAME}_edited_path_utest edited_path_utest.cpp)
+target_link_libraries(${PROJECT_NAME}_edited_path_utest PRIVATE ${PROJECT_NAME} GTest::GTest GTest::Main)
+add_gtest_discover_tests(${PROJECT_NAME}_edited_path_utest)
+
+add_executable(${PROJECT_NAME}_point_edit_utest point_edit_utest.cpp)
+target_link_libraries(${PROJECT_NAME}_point_edit_utest PRIVATE ${PROJECT_NAME} GTest::GTest GTest::Main)
+add_gtest_discover_tests(${PROJECT_NAME}_point_edit_utest)
+
+add_executable(${PROJECT_NAME}_view_cube_utest view_cube_utest.cpp)
+target_link_libraries(${PROJECT_NAME}_view_cube_utest PRIVATE ${PROJECT_NAME} GTest::GTest GTest::Main)
+add_gtest_discover_tests(${PROJECT_NAME}_view_cube_utest)
+
+add_executable(${PROJECT_NAME}_tpp_widget_utest tpp_widget_utest.cpp)
+target_link_libraries(${PROJECT_NAME}_tpp_widget_utest PRIVATE ${PROJECT_NAME} Qt5::Widgets GTest::GTest)
+add_gtest_discover_tests(${PROJECT_NAME}_tpp_widget_utest)

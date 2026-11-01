@@ -39,8 +39,11 @@ constexpr std::size_t kMinPassPoses = 4;
 /** @brief Surelevation des disques dessines a l'ouverture, en millimetres, pour qu'ils passent devant la piece */
 constexpr double kDefaultDiscLiftMm = 2.0;
 
-/** @brief Pas cible de l'outil Densifier a l'ouverture, en millimetres */
+/** @brief Pas cible de Densifier a l'ouverture, en millimetres (spec §24) */
 constexpr double kDefaultDensifyStepMm = 10.0;
+
+/** @brief Nombre de points par ecart de Densifier a l'ouverture (spec §24) */
+constexpr int kDefaultDensifyCount = 1;
 
 /**
  * @brief Poses hors contact a chaque bout d'une passe livree : une d'approche, une de retrait.

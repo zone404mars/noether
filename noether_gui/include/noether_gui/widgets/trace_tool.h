@@ -34,6 +34,15 @@ namespace noether
 std::vector<Eigen::Vector3d> sampleTrace(const std::vector<Eigen::Vector3d>& vertices, double step);
 
 /**
+ * @brief Repere d'une pose : z le long de la normale, x le sens de marche rendu orthogonal a z.
+ * @param travel Sens de marche, non normalise
+ * @param normal Normale de la surface, non normalisee
+ * @return Matrice de rotation ; si le sens de marche est colineaire a la normale, x est pris
+ * dans un axe quelconque du plan
+ */
+Eigen::Matrix3d traceFrame(const Eigen::Vector3d& travel, const Eigen::Vector3d& normal);
+
+/**
  * @brief Poses d'un trace : la position, l'axe z le long de la normale donnee, l'axe x dans le
  * sens de marche.
  * @details L'axe x est la direction vers le point suivant (vers le precedent pour le dernier

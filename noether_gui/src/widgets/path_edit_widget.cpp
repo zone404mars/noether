@@ -25,57 +25,36 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cmath>
-#include <stdexcept>
 
 namespace noether
 {
 namespace
 {
-/** @brief Metres to millimetres, for the readings shown to the operator */
-const double kMetresToMillimetres = 1000.0;
-
-/** @brief Radians to degrees, for the readings shown to the operator */
-const double kRadiansToDegrees = 180.0 / M_PI;
-
-/// @brief Builds a button, adds it to a grid, and returns it.
-/// @param layout Grid the button joins
-/// @param text Label shown on the button
-/// @param tip Explanation shown on hover
-/// @param row Grid row
-/// @param column Grid column
-QPushButton* addButton(QGridLayout* layout, const QString& text, const QString& tip, int row, int column)
+/// @brief Cree un bouton, le place dans une grille et le rend.
+/// @param layout Grille qui recoit le bouton
+/// @param row Ligne de la grille
+/// @param column Colonne de la grille
+QPushButton* addButton(QGridLayout* layout, const int row, const int column)
 {
-  QPushButton* button = new QPushButton(text, layout->parentWidget());
-  button->setToolTip(tip);
+  QPushButton* button = new QPushButton(layout->parentWidget());
   layout->addWidget(button, row, column);
   return button;
 }
 
 }  // namespace
 
-PathEditWidget::PathEditWidget(std::size_t min_poses, QWidget* parent)
-  : QWidget(parent), min_poses_(min_poses)
+PathEditWidget::PathEditWidget(const std::size_t min_poses, QWidget* parent)
+  : QWidget(parent), min_poses_(min_poses), path_(min_poses)
 {
   QVBoxLayout* layout = new QVBoxLayout(this);
-  list_label_ = new QLabel("Passes livrees, dans l'ordre d'execution :", this);
+  list_label_ = new QLabel(this);
   layout->addWidget(list_label_);
-
   pass_list_ = new QListWidget(this);
-  pass_list_->setToolTip("Chaque ligne donne son rang, les passes generees qu'elle enchaine\n"
-                         "([3<] = passe 3 parcourue a l'envers), puis son nombre de poses.");
   layout->addWidget(pass_list_);
-
   buildControls();
-
-  weld_label_ = new QLabel(this);
-  weld_label_->setWordWrap(true);
-  layout->addWidget(weld_label_);
-
   fault_label_ = new QLabel(this);
   fault_label_->setWordWrap(true);
   layout->addWidget(fault_label_);
-
   connect(pass_list_, &QListWidget::currentRowChanged, this, [this](int) {
     updateReadings();
     if (on_selection_changed)
@@ -90,261 +69,89 @@ void PathEditWidget::buildControls()
 {
   QGridLayout* grid = new QGridLayout();
   static_cast<QVBoxLayout*>(this->layout())->addLayout(grid);
-
-  up_button_ = addButton(grid, "Monter", "Avance la passe dans l'ordre d'execution.", 0, 0);
-  down_button_ = addButton(grid, "Descendre", "Recule la passe dans l'ordre d'execution.", 0, 1);
-  reverse_button_ = addButton(grid, "Inverser", "Parcourt la passe dans l'autre sens.", 1, 0);
-  weld_button_ = addButton(grid,
-                           "Souder a la precedente",
-                           "Enchaine la passe a celle du dessus, sans decoller entre les deux.\n"
-                           "L'ecart et l'angle de la soudure sont affiches sous les boutons.",
-                           1,
-                           1);
-  split_button_ = addButton(grid, "Degrouper", "Rend a chaque passe generee sa ligne.", 2, 0);
-  remove_button_ = addButton(grid, "Supprimer", "Retire la passe de la livraison.", 2, 1);
-  chain_button_ = addButton(grid,
-                            "Enchainer depuis celle-ci",
-                            "Soude toutes les passes en une seule, en partant de la selectionnee :\n"
-                            "a chaque etape la plus proche, retournee si on l'aborde par sa fin.\n"
-                            "L'outil ne decolle plus ; verifier les ecarts avec Degrouper si besoin.",
-                            3,
-                            0);
-  undo_button_ = addButton(grid, "Annuler", "Revient a l'etat precedent la derniere action.", 4, 0);
-  reset_button_ = addButton(grid, "Tout reinitialiser", "Revient a la generation, sans aucune retouche.", 4, 1);
-
-  connectControls();
+  up_button_ = addButton(grid, 0, 0);
+  down_button_ = addButton(grid, 0, 1);
+  remove_button_ = addButton(grid, 1, 0);
+  undo_button_ = addButton(grid, 2, 0);
+  redo_button_ = addButton(grid, 2, 1);
+  // Textes francais tant que ::bindTexts n'a pas lie la langue
+  list_label_->setText(QString::fromUtf8("Passes livrées, dans l'ordre d'exécution :"));
+  up_button_->setText("Monter");
+  down_button_->setText("Descendre");
+  remove_button_->setText("Supprimer");
+  undo_button_->setText("Annuler");
+  redo_button_->setText(QString::fromUtf8("Rétablir"));
+  connect(up_button_, &QPushButton::clicked, this, [this](bool) { moveSelected(-1); });
+  connect(down_button_, &QPushButton::clicked, this, [this](bool) { moveSelected(1); });
+  connect(remove_button_, &QPushButton::clicked, this, [this](bool) { removeSelected(); });
+  connect(undo_button_, &QPushButton::clicked, this, [this](bool) { undo(); });
+  connect(redo_button_, &QPushButton::clicked, this, [this](bool) { redo(); });
 }
 
 void PathEditWidget::bindTexts(Translator& translator)
 {
-  translator.bindText(list_label_, { "Passes livrées, dans l'ordre d'exécution :", "Delivered passes, in execution order:" });
+  translator.bindText(list_label_,
+                      { "Passes livrées, dans l'ordre d'exécution :", "Delivered passes, in execution order:" });
   translator.bindText(up_button_, { "Monter", "Move up" });
-  translator.bindToolTip(up_button_, { "Avance la passe dans l'ordre d'exécution.", "Moves the pass earlier in the execution order." });
+  translator.bindToolTip(up_button_, { "Avance la passe dans l'ordre d'exécution.",
+                                       "Moves the pass earlier in the execution order." });
   translator.bindText(down_button_, { "Descendre", "Move down" });
-  translator.bindToolTip(down_button_, { "Recule la passe dans l'ordre d'exécution.", "Moves the pass later in the execution order." });
+  translator.bindToolTip(down_button_, { "Recule la passe dans l'ordre d'exécution.",
+                                         "Moves the pass later in the execution order." });
   translator.bindText(remove_button_, { "Supprimer", "Remove" });
-  translator.bindToolTip(remove_button_, { "Retire la passe de la livraison.", "Drops the pass from the delivery." });
+  translator.bindToolTip(remove_button_,
+                         { "Retire la passe du chemin livré.", "Drops the pass from the delivered path." });
   translator.bindText(undo_button_, { "Annuler", "Undo" });
-  translator.bindToolTip(undo_button_, { "Revient à l'état précédant la dernière action.", "Goes back to the state before the last action." });
-  translator.bindToolTip(pass_list_,
-                         { "Chaque ligne donne son rang, les passes générées qu'elle enchaîne\n"
-                           "([3<] = passe 3 parcourue à l'envers), puis son nombre de poses.",
-                           "Each row gives its rank, the generated passes it chains\n"
-                           "([3<] = pass 3 run backwards), then its number of poses." });
-  // L'en-tete des defauts est calcule : il est recalcule au changement de langue
+  translator.bindToolTip(undo_button_, { "Défait la dernière action.", "Undoes the last action." });
+  translator.bindText(redo_button_, { "Rétablir", "Redo" });
+  translator.bindToolTip(redo_button_, { "Refait la dernière action défaite.", "Redoes the last undone action." });
+  // Les lignes et les defauts sont calcules : ils sont recalcules au changement de langue
   translator_ = &translator;
-  translator.bind([this]() { updateLabels(); });
+  translator.bind([this]() { rebuildPassList(selectedPass()); updateReadings(); });
 }
 
-void PathEditWidget::hideAdvancedControls()
+QString PathEditWidget::say(const QString& french, const QString& english) const
 {
-  for (QPushButton* button : { reverse_button_, weld_button_, split_button_, chain_button_, reset_button_ })
+  return translator_ != nullptr ? translator_->text({ french, english }) : french;
+}
+
+void PathEditWidget::setPasses(const std::vector<EditedPass>& passes)
+{
+  path_.reset(passes);
+  notifyRenumbered();
+  refresh(passes.empty() ? -1 : 0);
+}
+
+ToolPath PathEditWidget::passes() const
+{
+  ToolPath poses;
+  for (const EditedPass& pass : path_.passes())
   {
-    button->hide();
+    poses.push_back(pass.poses);
   }
-  weld_label_->hide();
-}
-
-void PathEditWidget::connectControls()
-{
-  connect(up_button_, &QPushButton::clicked, this, [this](bool) { moveSelected(-1); });
-  connect(down_button_, &QPushButton::clicked, this, [this](bool) { moveSelected(1); });
-  connect(reverse_button_, &QPushButton::clicked, this, [this](bool) { reverseSelected(); });
-  connect(weld_button_, &QPushButton::clicked, this, [this](bool) { weldSelected(); });
-  connect(chain_button_, &QPushButton::clicked, this, [this](bool) { chainFromSelected(); });
-  connect(split_button_, &QPushButton::clicked, this, [this](bool) { splitSelected(); });
-  connect(remove_button_, &QPushButton::clicked, this, [this](bool) { removeSelected(); });
-  connect(undo_button_, &QPushButton::clicked, this, [this](bool) { undo(); });
-  connect(reset_button_, &QPushButton::clicked, this, [this](bool) { reset(); });
-}
-
-void PathEditWidget::setGenerated(const std::vector<ToolPathSegment>& generated)
-{
-  generated_ = generated;
-  recipe_ = identityRecipe(generated_.size());
-  moves_.clear();
-  insertions_.clear();
-  // Une nouvelle generation renumerote les passes : l'historique ne designerait plus rien.
-  history_.clear();
-  refresh(generated_.empty() ? -1 : 0);
-}
-
-void PathEditWidget::applyRecipeFile(const RecipeFile& content, double tolerance)
-{
-  const std::vector<std::size_t> stale =
-      staleSegments(content.source, fingerprintSegments(generated_), tolerance);
-  if (!stale.empty())
-  {
-    QString passes;
-    for (std::size_t i = 0; i < stale.size(); ++i)
-    {
-      passes += (i == 0 ? "" : ", ") + QString::number(stale[i]);
-    }
-    throw std::runtime_error(
-        QString("La recette a ete ecrite sur une autre generation : les passes %1 n'y correspondent "
-                "plus. Ses indices designeraient d'autres passes, la rejouer souderait les mauvaises.")
-            .arg(passes)
-            .toStdString());
-  }
-  remember();
-  recipe_ = content.recipe;
-  moves_ = content.moves;
-  insertions_ = content.insertions;
-  refresh(0);
+  return poses;
 }
 
 int PathEditWidget::selectedPass() const
 {
   const int row = pass_list_->currentRow();
-  return row < static_cast<int>(passes_.size()) ? row : -1;
+  return row < static_cast<int>(path_.passes().size()) ? row : -1;
 }
 
-std::vector<std::string> PathEditWidget::faults() const
-{
-  if (generated_.empty())
-  {
-    return std::vector<std::string>();
-  }
-  return validateRecipe(generated_, recipe_, min_poses_);
-}
+void PathEditWidget::selectPass(const int row) { pass_list_->setCurrentRow(row); }
 
-bool PathEditWidget::isRetouched() const
-{
-  const PathRecipe untouched = identityRecipe(generated_.size());
-  if (recipe_.size() != untouched.size() || !moves_.empty() || !insertions_.empty())
-  {
-    return true;
-  }
-  for (std::size_t p = 0; p < recipe_.size(); ++p)
-  {
-    if (recipe_[p].size() != 1 || recipe_[p][0].segment != p || recipe_[p][0].reversed)
-    {
-      return true;
-    }
-  }
-  return false;
-}
-
-void PathEditWidget::selectPass(int row)
-{
-  pass_list_->setCurrentRow(row);
-}
-
-void PathEditWidget::remember() { history_.push_back(EditState{ recipe_, moves_, insertions_ }); }
-
-std::vector<ToolPathSegment> PathEditWidget::movedGenerated() const { return applyPoseMoves(generated_, moves_); }
-
-void PathEditWidget::beginPoseMoves() { remember(); }
-
-void PathEditWidget::movePose(const PoseMove& move)
-{
-  // Une pose deja deplacee reprend le nouveau deplacement a la place de l'ancien
-  for (PoseMove& existing : moves_)
-  {
-    if (existing.segment == move.segment && existing.index == move.index)
-    {
-      existing.pose = move.pose;
-      refresh(selectedPass());
-      return;
-    }
-  }
-  moves_.push_back(move);
-  refresh(selectedPass());
-}
-
-void PathEditWidget::insertPoses(const std::vector<PoseInsertion>& insertions)
-{
-  if (insertions.empty())
-  {
-    return;
-  }
-  // Un seul point d'annulation pour toute la densification
-  remember();
-  for (const PoseInsertion& insertion : insertions)
-  {
-    // Redensifier une place remplace ce qui y avait ete ajoute
-    const auto same_place = [&insertion](const PoseInsertion& existing) {
-      return existing.segment == insertion.segment && existing.after == insertion.after;
-    };
-    insertions_.erase(std::remove_if(insertions_.begin(), insertions_.end(), same_place), insertions_.end());
-    // Une insertion vide ne fait qu'effacer : l'ecart est deja sous le pas
-    if (!insertion.poses.empty())
-    {
-      insertions_.push_back(insertion);
-    }
-  }
-  refresh(selectedPass());
-}
-
-void PathEditWidget::moveSelected(int delta)
+void PathEditWidget::moveSelected(const int delta)
 {
   const int row = selectedPass();
   const int target = row + delta;
-  if (row < 0 || target < 0 || target >= static_cast<int>(recipe_.size()))
+  if (row < 0 || target < 0 || target >= static_cast<int>(path_.passes().size()))
   {
     return;
   }
-  remember();
-  std::swap(recipe_[static_cast<std::size_t>(row)], recipe_[static_cast<std::size_t>(target)]);
+  path_.movePass(static_cast<std::size_t>(row), static_cast<std::size_t>(target));
+  notifyRenumbered();
+  // Le choix suit la passe deplacee, sinon le clic suivant porterait sur une autre
   refresh(target);
-}
-
-void PathEditWidget::reverseSelected()
-{
-  const int row = selectedPass();
-  if (row < 0)
-  {
-    return;
-  }
-  remember();
-  recipe_[static_cast<std::size_t>(row)] = reverseSources(recipe_[static_cast<std::size_t>(row)]);
-  refresh(row);
-}
-
-void PathEditWidget::chainFromSelected()
-{
-  const int row = selectedPass();
-  if (row < 0 || recipe_.size() < 2)
-  {
-    return;
-  }
-  remember();
-  recipe_ = chainPasses(generated_, recipe_, static_cast<std::size_t>(row));
-  refresh(0);
-}
-
-void PathEditWidget::weldSelected()
-{
-  const int row = selectedPass();
-  if (row < 1)
-  {
-    return;
-  }
-  remember();
-  std::vector<SourceSegment>& previous = recipe_[static_cast<std::size_t>(row) - 1];
-  const std::vector<SourceSegment>& current = recipe_[static_cast<std::size_t>(row)];
-  previous.insert(previous.end(), current.begin(), current.end());
-  recipe_.erase(recipe_.begin() + row);
-  refresh(row - 1);
-}
-
-void PathEditWidget::splitSelected()
-{
-  const int row = selectedPass();
-  if (row < 0 || recipe_[static_cast<std::size_t>(row)].size() < 2)
-  {
-    return;
-  }
-  remember();
-  const std::vector<SourceSegment> sources = recipe_[static_cast<std::size_t>(row)];
-  PathRecipe pieces;
-  for (std::size_t i = 0; i < sources.size(); ++i)
-  {
-    pieces.push_back(std::vector<SourceSegment>(1, sources[i]));
-  }
-  recipe_.erase(recipe_.begin() + row);
-  recipe_.insert(recipe_.begin() + row, pieces.begin(), pieces.end());
-  refresh(row);
 }
 
 void PathEditWidget::removeSelected()
@@ -354,47 +161,80 @@ void PathEditWidget::removeSelected()
   {
     return;
   }
-  remember();
-  recipe_.erase(recipe_.begin() + row);
-  refresh(std::min(row, static_cast<int>(recipe_.size()) - 1));
+  path_.removePass(static_cast<std::size_t>(row));
+  notifyRenumbered();
+  refresh(std::min(row, static_cast<int>(path_.passes().size()) - 1));
 }
 
 void PathEditWidget::undo()
 {
-  if (history_.empty())
-  {
-    return;
-  }
-  recipe_ = history_.back().recipe;
-  moves_ = history_.back().moves;
-  insertions_ = history_.back().insertions;
-  history_.pop_back();
+  path_.undo();
+  notifyRenumbered();
   refresh(selectedPass());
 }
 
-void PathEditWidget::reset()
+void PathEditWidget::redo()
 {
-  remember();
-  recipe_ = identityRecipe(generated_.size());
-  moves_.clear();
-  insertions_.clear();
-  refresh(generated_.empty() ? -1 : 0);
+  path_.redo();
+  notifyRenumbered();
+  refresh(selectedPass());
 }
 
-void PathEditWidget::refresh(int row_to_select)
+std::optional<std::size_t> PathEditWidget::passTooShortAfterRemoval(const std::vector<PoseRef>& poses) const
 {
-  try
-  {
-    // Deplacements, puis insertions, puis recette : les rangs des deux premiers sont ceux de la generation
-    passes_ = assemblePasses(applyPoseInsertions(movedGenerated(), insertions_), recipe_);
-  }
-  catch (const std::exception&)
-  {
-    // Aucun bouton ne peut produire une recette structurellement fausse. Si cela arrive
-    // quand meme, mieux vaut une liste vide qu'une exception traversant la boucle Qt.
-    passes_.clear();
-  }
+  return path_.passTooShortAfterRemoval(poses);
+}
 
+void PathEditWidget::removePoses(const std::vector<PoseRef>& poses)
+{
+  path_.removePoses(poses);
+  refresh(selectedPass());
+}
+
+void PathEditWidget::insertPoses(const std::vector<GapInsertion>& insertions)
+{
+  if (insertions.empty())
+  {
+    return;
+  }
+  path_.insertPoses(insertions);
+  refresh(selectedPass());
+}
+
+void PathEditWidget::beginDrag() { path_.beginAction(); }
+
+void PathEditWidget::setPose(const PoseRef& ref, const Eigen::Isometry3d& pose) { path_.setPose(ref, pose); }
+
+void PathEditWidget::endDrag() { refresh(selectedPass()); }
+
+void PathEditWidget::notifyRenumbered()
+{
+  if (on_poses_renumbered)
+  {
+    on_poses_renumbered();
+  }
+}
+
+std::vector<std::string> PathEditWidget::faults() const
+{
+  std::vector<std::string> problems;
+  for (std::size_t p = 0; p < path_.passes().size(); ++p)
+  {
+    const std::size_t count = path_.passes()[p].poses.size();
+    if (count < min_poses_)
+    {
+      problems.push_back(say("passe %1 : %2 poses, il en faut au moins %3", "pass %1: %2 poses, at least %3 needed")
+                             .arg(p + 1)
+                             .arg(count)
+                             .arg(min_poses_)
+                             .toStdString());
+    }
+  }
+  return problems;
+}
+
+void PathEditWidget::refresh(const int row_to_select)
+{
   rebuildPassList(row_to_select);
   updateReadings();
   if (on_changed)
@@ -403,13 +243,12 @@ void PathEditWidget::refresh(int row_to_select)
   }
 }
 
-void PathEditWidget::rebuildPassList(int row_to_select)
+void PathEditWidget::rebuildPassList(const int row_to_select)
 {
-  // Les signaux sont coupes le temps de la reconstruction : chaque ligne ajoutee deplacerait
-  // sinon la selection, et l'hote redessinerait le surlignage a chaque ligne.
+  // Signaux coupes le temps de la reconstruction : chaque ligne ajoutee deplacerait le choix
   pass_list_->blockSignals(true);
   pass_list_->clear();
-  for (std::size_t i = 0; i < passes_.size(); ++i)
+  for (std::size_t i = 0; i < path_.passes().size(); ++i)
   {
     pass_list_->addItem(describePass(i));
   }
@@ -422,81 +261,26 @@ void PathEditWidget::rebuildPassList(int row_to_select)
 
 void PathEditWidget::updateReadings()
 {
-  updateButtons();
-  updateLabels();
-}
-
-void PathEditWidget::updateButtons()
-{
   const int row = selectedPass();
-  const bool has_row = row >= 0;
-  const int count = static_cast<int>(passes_.size());
-
-  up_button_->setEnabled(has_row && row > 0);
-  down_button_->setEnabled(has_row && row + 1 < count);
-  reverse_button_->setEnabled(has_row);
-  weld_button_->setEnabled(has_row && row > 0);
-  chain_button_->setEnabled(has_row && count > 1);
-  split_button_->setEnabled(has_row && recipe_[static_cast<std::size_t>(row)].size() > 1);
-  remove_button_->setEnabled(has_row);
-  undo_button_->setEnabled(!history_.empty());
-  reset_button_->setEnabled(!generated_.empty());
-}
-
-void PathEditWidget::updateLabels()
-{
-  weld_label_->setText(describeWeld(selectedPass()));
-
+  const int count = static_cast<int>(path_.passes().size());
+  up_button_->setEnabled(row > 0);
+  down_button_->setEnabled(row >= 0 && row + 1 < count);
+  remove_button_->setEnabled(row >= 0);
+  undo_button_->setEnabled(path_.canUndo());
+  redo_button_->setEnabled(path_.canRedo());
   const std::vector<std::string> problems = faults();
-  if (problems.empty())
+  QString text = problems.empty() ? QString() : say("À corriger avant d'exporter :", "To fix before exporting:");
+  for (const std::string& problem : problems)
   {
-    fault_label_->setText(QString());
-    return;
-  }
-  QString text = QString::fromUtf8("À corriger avant d'enregistrer :");
-  if (translator_ != nullptr)
-  {
-    text = translator_->text({ text, "To fix before saving:" });
-  }
-  for (std::size_t i = 0; i < problems.size(); ++i)
-  {
-    text += "\n- " + QString::fromStdString(problems[i]);
+    text += "\n- " + QString::fromStdString(problem);
   }
   fault_label_->setText(text);
 }
 
-QString PathEditWidget::describeWeld(int row) const
+QString PathEditWidget::describePass(const std::size_t index) const
 {
-  if (row < 1)
-  {
-    return QString();
-  }
-  const WeldMetrics metrics =
-      computeWeldMetrics(passes_[static_cast<std::size_t>(row) - 1], passes_[static_cast<std::size_t>(row)]);
-  if (metrics.gap < 0.0)
-  {
-    return "Soudure avec la precedente : une des deux passes est trop courte pour etre soudee.";
-  }
-  // L'ecart et l'angle sont montres AVANT l'action : souder deux zones opposees de la piece
-  // est parfois voulu, ce n'est pas a la GUI de trancher a la place de l'operateur.
-  return QString("Soudure avec la precedente : ecart %1 mm, angle %2 deg.")
-      .arg(metrics.gap * kMetresToMillimetres, 0, 'f', 1)
-      .arg(metrics.angle * kRadiansToDegrees, 0, 'f', 1);
-}
-
-QString PathEditWidget::describePass(std::size_t index) const
-{
-  QString sources;
-  for (std::size_t s = 0; s < recipe_[index].size(); ++s)
-  {
-    sources += QString("[%1%2]")
-                   .arg(static_cast<int>(recipe_[index][s].segment))
-                   .arg(recipe_[index][s].reversed ? "<" : "");
-  }
-  return QString("%1  %2  %3 poses")
-      .arg(static_cast<int>(index) + 1, 2)
-      .arg(sources, -20)
-      .arg(static_cast<int>(passes_[index].size()), 4);
+  return say("%1  %2 poses", "%1  %2 poses").arg(static_cast<int>(index) + 1, 2).arg(
+      static_cast<int>(path_.passes()[index].poses.size()), 4);
 }
 
 }  // namespace noether

@@ -39,12 +39,20 @@ add_library(
   src/widgets/tpp_widget.cpp
   src/widgets/tpp_widget_layout.cpp
   src/widgets/tpp_widget_coverage.cpp
-  src/widgets/tpp_widget_densify.cpp
+  src/widgets/tpp_widget_edit_points.cpp
+  src/widgets/tpp_widget_point_actions.cpp
+  src/widgets/tpp_widget_point_view.cpp
+  src/widgets/tpp_widget_view_cube.cpp
   src/widgets/translator.cpp
   src/widgets/process_ribbon.cpp
   src/widgets/path_edit_widget.cpp
   src/widgets/outline_tool.cpp
   src/widgets/trace_tool.cpp
+  src/widgets/pass_surface.cpp
+  src/widgets/edited_path.cpp
+  src/widgets/point_edit.cpp
+  src/widgets/point_picking.cpp
+  src/widgets/view_cube.cpp
   src/widgets/step_import.cpp
   # Tool Path Planners
   # Raster Planner

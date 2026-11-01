@@ -159,7 +159,7 @@ QToolButton* TPPWidget::addModeTool(const int tab, const QString& icon, const Bi
 void TPPWidget::releaseDragTools()
 {
   // L'outil de selection courant reprend la souris ; le groupe exclusif relache l'autre
-  if (tracing() || movingPoints() || densifying())
+  if (tracing() || editingPoints())
   {
     buttonOfTool(tool_)->setChecked(true);
   }
@@ -330,14 +330,12 @@ void TPPWidget::buildTreatmentTab(const int tab)
 
 void TPPWidget::addPointTools(const int tab)
 {
-  move_points_button_ = addModeTool(tab, ":/icons/move_points.svg", { "Déplacer des points", "Move points" },
-                                    { "Glisser : saisit le point de contact le plus proche et le pose sur la pièce.",
-                                      "Drag: grabs the nearest contact point and drops it on the part." });
-  connect(move_points_button_, &QToolButton::toggled, this, [this](bool checked) { onMovePointsToggled(checked); });
-  densify_button_ = addModeTool(tab, ":/icons/densify.svg", { "Densifier", "Densify" },
-                                { "Clic sur deux points d'une passe : des points s'ajoutent entre eux au pas voulu.",
-                                  "Click two points of a pass: points are added between them at the wanted step." });
-  connect(densify_button_, &QToolButton::toggled, this, [this](bool checked) { onDensifyToggled(checked); });
+  edit_points_button_ = addModeTool(tab, ":/icons/move_points.svg", { "Éditer les points", "Edit points" },
+                                    { "Clic : choisit un point. Glisser : déplace. Suppr : supprime. Deux points "
+                                      "d'une passe : Densifier.",
+                                      "Click: picks a point. Drag: moves. Delete: removes. Two points of a pass: "
+                                      "Densify." });
+  connect(edit_points_button_, &QToolButton::toggled, this, [this](bool checked) { onEditPointsToggled(checked); });
 }
 
 void TPPWidget::onGenerateTool()
@@ -354,12 +352,10 @@ void TPPWidget::buildPathTab(const int tab)
                                         { "Ordre d'exécution des passes par la cellule.", "Execution order of the passes." });
   connect(order, &QToolButton::clicked, this, [this]() { showOrderOptions(); });
   QToolButton* export_button = ribbon_->addTool(tab, ":/icons/export.svg", { "Exporter", "Export" },
-                                                { "Écrit le chemin retouché, et la retouche à côté.",
-                                                  "Writes the retouched path, and the retouching beside it." });
+                                                { "Écrit le chemin retouché.", "Writes the retouched path." });
   connect(export_button, &QToolButton::clicked, this, [this]() {
     showOptions("empty", { "Exporter", "Export" },
-                { "Écrit le chemin retouché pour la cellule, et la retouche à côté pour pouvoir la rejouer.",
-                  "Writes the retouched path for the cell, and the retouching beside it so it can be replayed." });
+                { "Écrit le chemin retouché pour la cellule.", "Writes the retouched path for the cell." });
     onSaveToolPaths(false);
   });
   tab_entries_.push_back([this]() {
@@ -435,8 +431,7 @@ void TPPWidget::buildOptionPages()
   addOptionPage("region", buildRegionPage());
   addOptionPage("brush", buildBrushPage());
   addOptionPage("trace", buildTracePage());
-  addOptionPage("move", buildMovePage());
-  addOptionPage("densify", buildDensifyPage());
+  addOptionPage("edit_points", buildEditPointsPage());
   addOptionPage("order", buildOrderPage());
   addOptionPage("layers", buildLayersPage());
   addOptionPage("views", buildViewsPage());
@@ -600,29 +595,14 @@ void TPPWidget::refreshToolRadiusViews()
   render();
 }
 
-QWidget* TPPWidget::buildMovePage()
-{
-  validate_layout_button_ = new QPushButton(this);
-  translator_.bindText(validate_layout_button_, { "Valider la disposition", "Confirm layout" });
-  connect(validate_layout_button_, &QPushButton::clicked, this, [this](bool) { validateLayout(); });
-  auto* undo = new QPushButton(this);
-  translator_.bindText(undo, { "Annuler le dernier déplacement", "Undo last move" });
-  connect(undo, &QPushButton::clicked, this, [this](bool) { path_edit_->undo(); });
-  auto* page = new QWidget(this);
-  auto* layout = new QVBoxLayout(page);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->addWidget(validate_layout_button_);
-  layout->addWidget(undo);
-  return page;
-}
-
 QWidget* TPPWidget::buildOrderPage()
 {
   // En tout-manuel, seules restent les retouches d'ordre et de suppression
   path_edit_ = new PathEditWidget(kMinPassPoses, this);
-  path_edit_->hideAdvancedControls();
   path_edit_->bindTexts(translator_);
   path_edit_->on_changed = [this]() { onPathEdited(); };
+  // Des points choisis designeraient d'autres poses, ou des passes disparues : la selection se vide (§18)
+  path_edit_->on_poses_renumbered = [this]() { clearPointSelection(); };
   path_edit_->on_selection_changed = [this]() {
     updatePathHighlight();
     selectPassItem(path_edit_->selectedPass());
@@ -688,7 +668,7 @@ QWidget* TPPWidget::buildViewsPage()
   addViewButton(layout, 0, 0, { "Face", "Front" }, Eigen::Vector3d(0, -1, 0), Eigen::Vector3d::UnitZ());
   addViewButton(layout, 0, 1, { "Dessus", "Top" }, Eigen::Vector3d::UnitZ(), Eigen::Vector3d::UnitY());
   addViewButton(layout, 1, 0, { "Côté", "Side" }, Eigen::Vector3d::UnitX(), Eigen::Vector3d::UnitZ());
-  addViewButton(layout, 1, 1, { "Isométrique", "Isometric" }, Eigen::Vector3d(1, -1, 1), Eigen::Vector3d::UnitZ());
+  addViewButton(layout, 1, 1, { "Isométrique", "Isometric" }, kHomeViewDirection, Eigen::Vector3d::UnitZ());
   return page;
 }
 
@@ -878,6 +858,7 @@ void TPPWidget::removeSurface(QTreeWidgetItem* item, const bool back_to_selectio
     }
   }
   surface_traces_.erase(surface_id);
+  forgetTraceHistory(surface_id);
   hidden_surfaces_.erase(surface_id);
   trace_preview_active_ = false;
   delete item;
@@ -921,6 +902,11 @@ void TPPWidget::onTreeCurrentChanged()
   if (item != nullptr && item->parent() == passes_item_ && path_edit_ != nullptr)
   {
     path_edit_->selectPass(item->data(0, kPassRowRole).toInt());
+  }
+  // Avant generation, les points edites sont ceux de la surface courante : en changer vide la selection (§19.1)
+  if (editingTrace())
+  {
+    clearPointSelection();
   }
   updateTraceMarkers();
   render();

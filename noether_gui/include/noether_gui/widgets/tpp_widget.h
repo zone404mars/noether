@@ -2,8 +2,11 @@
 
 #include <noether_tpp/core/face_selection.h>
 #include <noether_gui/widgets/outline_tool.h>
+#include <noether_gui/widgets/edited_path.h>
+#include <noether_gui/widgets/point_edit.h>
 #include <noether_gui/widgets/step_import.h>
 #include <noether_gui/widgets/translator.h>
+#include <noether_gui/widgets/view_cube.h>
 #include <noether_tpp/core/face_coverage.h>
 #include <noether_tpp/core/tool_path_recipe.h>
 #include <noether_tpp/core/types.h>
@@ -16,6 +19,7 @@
 #include <map>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -48,6 +52,10 @@ class vtkPropAssembly;
 class vtkPolyData;
 class vtkActor2D;
 class vtkCellLocator;
+class vtkBillboardTextActor3D;
+class vtkAnnotatedCubeActor;
+class QFrame;
+class QSpinBox;
 class vtkCellPicker;
 class vtkPolyDataMapper2D;
 class vtkUnsignedCharArray;
@@ -98,6 +106,8 @@ class TPPWidget : public QMainWindow
 {
 public:
   TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* parent = nullptr);
+  /** @brief Retire l'observateur du cube : un rendu pendant la destruction ne doit plus l'appeler */
+  ~TPPWidget() override;
 
   /**
    * @brief Sets the file path for the mesh to use for tool path planning
@@ -248,7 +258,7 @@ protected:
   void onAddSurfaceTool();
   /** @brief Outil Generer : aide affichee, puis generation */
   void onGenerateTool();
-  /** @brief Outils de l'onglet Traitement qui retouchent les points du chemin : deplacer, densifier */
+  /** @brief Outil Editer les points de l'onglet Traitement (spec §19) */
   void addPointTools(int tab);
   /** @brief Onglet 1 : ouvrir une piece, reprendre un chemin */
   void buildFileTab(int tab);
@@ -302,8 +312,6 @@ protected:
   void createTraceFields();
   /** @brief Redessine ce qui depend du rayon de l'outil : erosion, cercles du disque, trace */
   void refreshToolRadiusViews();
-  /** @brief Page Deplacer des points : valider, annuler */
-  QWidget* buildMovePage();
   /** @brief Page Ordre des passes : le panneau de retouche du chemin */
   QWidget* buildOrderPage();
   /** @brief Affiche la page Ordre des passes */
@@ -325,6 +333,39 @@ protected:
    * @param up Haut de l'image
    */
   void setCameraView(const Eigen::Vector3d& direction, const Eigen::Vector3d& up);
+
+  /** @brief Cube de navigation en haut a droite de la vue, ses fleches et son bouton maison (spec §22) */
+  void buildViewCube();
+  /** @brief Cube a faces nommees, lettres sombres */
+  void buildViewCubeActor();
+  /** @brief Fleches, quarts de tour et bouton maison autour du cube */
+  void buildViewCubeButtons();
+  /** @brief Fleche triangulaire vers la face voisine de ce cote de l'ecran */
+  void addViewCubeArrow(CubeArrow arrow, const QString& symbol, const Bilingual& tip);
+  /** @brief Libelles des faces du cube dans la langue de l'IHM */
+  void labelViewCubeFaces();
+  /** @brief Bouton pose sur la vue, autour du cube */
+  QToolButton* addViewCubeButton(const QString& symbol, const Bilingual& tip, const std::function<void()>& action);
+  /** @brief Avant chaque image : le cube prend l'orientation de la camera et sa place en haut a droite */
+  void syncViewCube();
+  /** @brief Place les boutons autour du cube ; les fleches ne se montrent que vue alignee sur une face */
+  void updateViewCubeButtons();
+  /** @brief Cote ou se trouve la camera principale, vu de son point vise, unitaire */
+  Eigen::Vector3d cameraSide() const;
+  /** @brief Haut de l'image de la camera principale */
+  Eigen::Vector3d cameraUp() const;
+  /**
+   * @brief Point du cube sous un pixel de la vue
+   * @param x, y Pixel, en coordonnees VTK
+   * @return Le point de la surface du cube, ou rien si le pixel ne tombe pas sur le cube
+   */
+  std::optional<Eigen::Vector3d> viewCubePoint(int x, int y) const;
+  /** @brief Clic sans glisser sur le cube : vue de la face, de l'arete ou du coin touche */
+  void onViewCubeClick(int x, int y);
+  /** @brief Fleche triangulaire : vue de la face voisine de ce cote de l'ecran */
+  void onViewCubeArrow(CubeArrow arrow);
+  /** @brief Fleche courbe : quart de tour autour de l'axe de vue */
+  void onViewCubeRoll(bool clockwise);
   /** @brief Page Langue : francais ou anglais */
   QWidget* buildLanguagePage();
 
@@ -415,57 +456,111 @@ protected:
   /** @brief Fixe le texte de l'etiquette de couverture dans les deux langues et l'affiche */
   void setCoverageInfo(const Bilingual& text);
 
-  // Outil Densifier, dans tpp_widget_densify.cpp
+  // Outil Editer les points (spec §19), dans tpp_widget_edit_points.cpp, tpp_widget_point_actions.cpp
+  // et tpp_widget_point_view.cpp
 
-  /** @brief Vrai quand l'outil Densifier de l'onglet Traitement est enfonce */
-  bool densifying() const;
-  /** @brief L'outil Densifier change d'etat : les deux points choisis sont oublies */
-  void onDensifyToggled(bool checked);
-  /** @brief Page Densifier : pas cible, points choisis, Densifier, Effacer */
-  QWidget* buildDensifyPage();
-  /** @brief Boutons Densifier et Effacer de la page Densifier */
-  void addDensifyButtons(QVBoxLayout* layout);
+  /** @brief Vrai quand l'outil Editer les points est enfonce */
+  bool editingPoints() const;
+  /** @brief Vrai avant generation : les points editables sont les sommets du trace de la surface courante */
+  bool editingTrace() const;
+  /** @brief L'outil Editer les points change d'etat : la selection, la barre et l'apercu sont oublies */
+  void onEditPointsToggled(bool checked);
   /**
-   * @brief Ajoute un point choisi pour densifier ; un troisieme clic recommence le choix
-   * @return Faux si le point n'est pas sur la meme passe generee que le premier
+   * @brief Points editables et leur position : poses de contact apres generation, sommets du trace
+   * de la surface courante avant (spec §19.1). Avant generation, `pass` porte le numero de surface.
    */
-  bool addDensifyEnd(const PoseMove& found);
-  /** @brief Clic dans la vue pendant Densifier : choisit le premier, puis le second point de contact */
-  void onDensifyClick(int x, int y);
-  /** @brief Recalcule le texte des points choisis, dans la langue courante */
-  void relabelDensifyEnds();
-  /** @brief Oublie les points choisis et retire leurs marques */
-  void clearDensifyEnds();
-  /** @brief Marques des points choisis dans la vue */
-  void updateDensifyMarkers();
-  /** @brief Ajoute les poses entre les deux points choisis, au pas cible, avec un point d'annulation */
-  void applyDensify();
+  std::vector<std::pair<PoseRef, Eigen::Vector3d>> editablePoints() const;
+  /** @brief Point editable visible le plus proche du curseur a moins de 10 pixels logiques (§19.2) */
+  std::optional<PoseRef> pointUnderCursor(int x, int y);
+  /** @brief Position a l'ecran d'un point, en pixels de l'interacteur */
+  Eigen::Vector2d toDisplay(const Eigen::Vector3d& point) const;
+  /** @brief Vrai quand la piece ne cache pas le point a plus de 1 mm avant lui (§19.2) */
+  bool pointVisible(const Eigen::Vector3d& point);
+  /** @brief Survol sans bouton : le point saisissable est dessine en pre-selection */
+  void onEditHover(int x, int y);
+  /** @brief Appui du bouton gauche : retient le point saisi et l'etat de Ctrl */
+  void onEditPress(int x, int y);
+  /** @brief Mouvement bouton enfonce : devient un glisser au-dela de la distance de glisser du systeme */
+  void onEditMove(int x, int y);
+  /** @brief Relachement : fin du glisser, ou clic qui change la selection */
+  void onEditRelease();
+  /** @brief Debut d'un glisser sur un point ; faux si rien ne peut bouger, avec un message */
+  bool startPointDrag();
+  /** @brief Raison qui empeche de glisser depuis le point saisi, ou rien si le glisser est permis (§23) */
+  std::optional<QString> dragBlockReason() const;
   /**
-   * @brief Poses a ajouter entre deux poses d'une meme passe de la generation
-   * @param step Ecart maximal voulu entre deux poses voisines, en metres
-   * @return Une insertion par ecart de A a B, reperee par le rang de la pose qui le precede ; vide
-   *         pour un ecart deja sous `step`, pour effacer un ajout precedent
-   * @throws std::out_of_range si `a` designe une passe absente de la generation
+   * @brief Vrai quand l'appui en cours est un glisser de points : seuil franchi depuis un point,
+   * glisser permis ; le commence au besoin
    */
-  std::vector<PoseInsertion> densifyInsertions(const PoseMove& a, const PoseMove& b, double step) const;
-  /**
-   * @brief Poses posees sur la piece entre deux poses voisines, assez nombreuses pour que l'ecart reste sous `step`
-   * @details Les positions sont reparties sur la corde puis ramenees sur la piece ; l'orientation
-   * est calculee comme celle du trace : axe z sur la normale, axe x dans le sens de marche.
-   * @return Les poses intermediaires seules, vide si l'ecart est deja sous `step`
-   */
-  ToolPathSegment gapPoses(vtkCellLocator& locator, const Eigen::Isometry3d& from, const Eigen::Isometry3d& to,
-                           double step) const;
-  /**
-   * @brief Ramene des points sur le maillage entier : chacun sur le point le plus proche
-   * @details Le maillage entier, pas la seule surface de la passe : pres d'un angle vif ou sur une
-   * piece mince, la face la plus proche peut appartenir a une surface voisine.
-   * @param locator Localisateur construit sur selection_poly_
-   * @param normals Sortie : normale de la face portant chaque projete
-   * @return Faux si un point ne trouve aucune face
-   */
-  bool projectOnMesh(vtkCellLocator& locator, std::vector<Eigen::Vector3d>& points,
-                     std::vector<Eigen::Vector3d>& normals) const;
+  bool pressBecameDrag(int x, int y);
+  /** @brief Vrai si toutes les passes de ces points ont une surface (spec N23) */
+  bool passesHaveSurface(const std::vector<PoseRef>& points) const;
+  /** @brief Garde l'etat d'avant le glisser et ouvre l'action d'annulation */
+  void rememberBeforeDrag();
+  /** @brief Deplace les points choisis du vecteur donne depuis leur place au debut du glisser */
+  void dragPointsBy(const Eigen::Vector3d& delta);
+  /** @brief Deplace les sommets choisis du trace, reposes sur la surface courante (§19.3) */
+  void dragTraceVerticesBy(const Eigen::Vector3d& delta);
+  /** @brief Fin du glisser : le chemin et ses dessins sont recalcules une fois */
+  void finishPointDrag();
+  /** @brief Touches de l'outil quand la vue a le focus : Suppr, Echap, Ctrl+Z, Ctrl+Y */
+  void onEditKey(const std::string& key);
+  /** @brief Vide la selection de points et met a jour ce qui en depend */
+  void clearPointSelection();
+  /** @brief Pourquoi Supprimer est indisponible, ou rien s'il est disponible (§20, §23) */
+  std::optional<QString> deleteBlockReason() const;
+  /** @brief Supprime les points choisis en une action (§20) */
+  void deleteSelectedPoints();
+  /** @brief Retire du trace courant les sommets choisis, avec un point d'annulation (§20.2) */
+  void deleteTraceVertices();
+  /** @brief Pourquoi Densifier est indisponible, ou rien s'il est disponible (§19.5, §23) */
+  std::optional<QString> densifyBlockReason() const;
+  /** @brief Ce que Densifier ferait avec la selection et les reglages courants, ou rien */
+  std::optional<DensifyPlan> currentDensifyPlan() const;
+  /** @brief Ajoute les poses de l'apercu en une action ; A et B restent choisies (§21) */
+  void densifySelectedPoints();
+  /** @brief Reglages de Densifier lus dans la page d'options */
+  DensifySettings densifySettings() const;
+  /** @brief Empile le trace de la surface courante pour Annuler et vide son Retablir */
+  void pushTraceUndo();
+  /** @brief Message de la barre d'etat apres Densifier : points ajoutes et ecarts sautes */
+  QString densifyReport(const DensifyPlan& plan) const;
+  /** @brief Vide les piles Annuler et Retablir du trace d'une surface : il a change hors de ces piles */
+  void forgetTraceHistory(int surface_id);
+  /** @brief Annuler : le chemin livre apres generation, le trace de la surface courante avant */
+  void undoPointEdit();
+  /** @brief Retablir : le chemin livre apres generation, le trace de la surface courante avant */
+  void redoPointEdit();
+  /** @brief Recalcule le libelle de la surface courante dans l'arbre */
+  void relabelCurrentSurface();
+  /** @brief Page d'options de l'outil : la selection, Supprimer, Densifier */
+  QWidget* buildEditPointsPage();
+  /** @brief Reglages et bouton de Densifier */
+  QWidget* buildDensifyControls();
+  /** @brief Relie les reglages de Densifier au recalcul de l'apercu */
+  void connectDensifyControls();
+  /** @brief Champs Pas cible et Points par ecart, avec leurs bornes et leurs valeurs d'ouverture */
+  void buildDensifySpinBoxes();
+  /** @brief Positions des poses de A a B, ou rien sans deux points d'une meme passe */
+  std::vector<Eigen::Vector3d> densifySpan() const;
+  /** @brief Barre contextuelle de la vue : Supprimer, Densifier (§19.5) */
+  void buildContextBar();
+  /** @brief Montre la barre contextuelle pres d'une position de l'interacteur, entiere dans la vue */
+  void showContextBar(const Eigen::Vector2d& display);
+  /** @brief Cache la barre contextuelle */
+  void hideContextBar();
+  /** @brief Tout ce qui depend de la selection : panneau, marques, apercu, barre */
+  void onPointSelectionChanged();
+  /** @brief Texte de la selection, boutons actifs ou grises avec leur bulle d'aide */
+  void updatePointPanel();
+  /** @brief Nombre de points, ou pour un seul point sa passe, son rang et sa position */
+  QString describePointSelection() const;
+  /** @brief Marques de la selection (magenta) et de la pre-selection (blanc) */
+  void updatePointMarkers();
+  /** @brief Points que Densifier ajouterait, troncon de A a B surligne, lettres A et B */
+  void updateDensifyPreview();
+  /** @brief Lettres A et B a cote des deux bouts du troncon */
+  void updateDensifyLabels(const std::vector<Eigen::Vector3d>& span);
 
   /** @brief Builds the VTK poly data, face adjacency, per-cell color array, and resets the selection */
   void buildSelectionData();
@@ -527,8 +622,6 @@ protected:
   bool tracing() const;
   /** @brief Le bouton Trace manuel change d'etat : il prend ou rend le tirage de la vue */
   void onTraceToggled(bool checked);
-  /** @brief Le bouton Deplacer des points change d'etat : il prend ou rend le tirage de la vue */
-  void onMovePointsToggled(bool checked);
   /**
    * @brief Genere chaque surface tracee, dans l'ordre des surfaces
    * @param unmodified Sortie : chemins bruts de la generation
@@ -537,6 +630,8 @@ protected:
   std::vector<int> planTracedSurfaces(std::vector<ToolPaths>& unmodified);
   /** @brief Met les fragments et les chemins dans la vue, et les passes dans le dock Trajectoire */
   void showPlannedPaths(const std::vector<ToolPaths>& unmodified);
+  /** @brief Passes de la generation, chacune avec la surface qui l'a donnee, ou nulle pour un chemin repris */
+  std::vector<EditedPass> generatedPasses() const;
   /** @brief Dit a l'operateur quelles surfaces n'ont pas ete generees, faute de trace */
   void reportUntracedSurfaces(const std::vector<int>& untraced);
 
@@ -561,40 +656,6 @@ protected:
   vtkSmartPointer<vtkPolyData> flatDiscCircles(const std::vector<Eigen::Vector3d>& points,
                                                const std::vector<Eigen::Vector3d>& normals) const;
 
-  /** @brief Vrai quand le bouton « Deplacer des points » est enfonce : le tirage saisit une pose */
-  bool movingPoints() const;
-  /** @brief Debut d'un tirage en mode deplacement : saisit la pose de contact la plus proche du clic */
-  void onPointDragStart(int x, int y);
-  /**
-   * @brief Pose de contact la plus proche d'un point, dans la generation deplacee
-   * @details Les poses d'approche et de retrait (kSkirtPoses a chaque bout) ne se saisissent pas :
-   * elles suivent la pose de contact voisine, voir ::moveSkirtPoses.
-   * @return Vrai quand une pose de contact est a moins de kGrabToleranceM
-   */
-  bool locateContactPose(const Eigen::Vector3d& clicked, PoseMove& found) const;
-  /**
-   * @brief Fait suivre l'approche ou le retrait a la pose de contact qui vient d'etre posee
-   * @details Si la pose deplacee est la premiere de contact, l'approche garde, dans le repere de
-   * cette pose, la place qu'elle avait : meme hauteur, meme axe. Idem pour le retrait derriere la
-   * derniere pose de contact.
-   */
-  void moveSkirtPoses();
-  /** @brief Suite du tirage : la pose saisie suit le curseur sur le maillage, z le long de la face */
-  void onPointDragMove(int x, int y);
-  /** @brief Fin du tirage : la pose deplacee entre dans la retouche, le chemin est reconstruit une fois */
-  void onPointDragEnd();
-  /**
-   * @brief Bouton « Valider la nouvelle disposition » : sort du mode deplacement et confirme
-   * @details Les poses deplacees font deja partie du chemin livre, donc du fichier ecrit par
-   * Save tool paths ; le bouton rend cette prise en compte explicite et rend le tirage aux outils.
-   */
-  void validateLayout();
-  /**
-   * @brief Redessine la marque de la pose saisie et son cercle
-   * @details Pendant le tirage, seuls ces deux acteurs bougent : reconstruire le chemin, la
-   * couverture et tous les cercles a chaque mouvement de souris rendrait le geste saccade.
-   */
-  void updateGrabMarker();
   /**
    * @brief Dessine un cercle de rayon outil autour de chaque point de contact du chemin livre
    * @details Le cercle est dans le plan de la pose : c'est l'empreinte du disque pose la. Il
@@ -746,26 +807,15 @@ protected:
   vtkSmartPointer<vtkActor> disc_actor_;
   /** @brief Cercles du disque le long du trace en cours */
   vtkSmartPointer<vtkActor> trace_disc_actor_;
-  /** @brief Outil a bascule de l'onglet Traitement : le tirage deplace des poses du chemin livre */
-  QToolButton* move_points_button_ = nullptr;
-  /** @brief Pose de la generation saisie par le tirage en cours */
-  PoseMove grabbed_;
-  /** @brief Vrai pendant un tirage qui deplace une pose */
-  bool grab_active_ = false;
-  /** @brief Position de la pose saisie avant le tirage : son cercle cyan est cache pendant qu'elle bouge */
-  Eigen::Vector3d grab_origin_ = Eigen::Vector3d::Zero();
-  /** @brief Passe de la generation deplacee telle qu'elle etait a la saisie, pour y lire l'approche et le retrait */
-  ToolPathSegment grab_segment_before_;
-  /** @brief Bouton de la page Deplacer des points qui clot le deplacement et confirme la disposition */
-  QPushButton* validate_layout_button_ = nullptr;
-  /** @brief Marque de la pose saisie */
-  vtkSmartPointer<vtkActor> grab_actor_;
-  /** @brief Cercle du disque de la pose saisie, qui suit le tirage */
-  vtkSmartPointer<vtkActor> grab_disc_actor_;
   /** @brief Panel where the operator retouches the planned path */
   PathEditWidget* path_edit_ = nullptr;
   /** @brief The submeshes planned in the last plan() call (one per selected region), for display/save */
   std::vector<pcl::PolygonMesh> fragments_;
+  /**
+   * @brief Surface de chaque passe generee, dans l'ordre aplati de ::tool_paths_ ; vide pour un
+   * chemin repris, qui n'a pas de surface (spec §21.1, N23)
+   */
+  std::vector<std::shared_ptr<const PassSurface>> generated_surfaces_;
 
   /** @brief Langue de l'interface et liaisons des textes, lue dans QSettings a la construction */
   Translator translator_{ Translator::savedLanguage() };
@@ -831,16 +881,92 @@ protected:
   /** @brief Texte de coverage_label_ dans les deux langues */
   Bilingual coverage_text_;
 
-  /** @brief Outil a bascule de l'onglet Traitement : les clics choisissent les points a densifier */
-  QToolButton* densify_button_ = nullptr;
-  /** @brief Points de contact choisis pour densifier, zero, un ou deux, dans une meme passe generee */
-  std::vector<PoseMove> densify_ends_;
+  /** @brief Outil a bascule de l'onglet Traitement : Editer les points */
+  QToolButton* edit_points_button_ = nullptr;
+  /** @brief Points choisis dans l'outil Editer les points */
+  PointSelection point_selection_;
+  /** @brief Point sous le curseur, dessine en pre-selection */
+  std::optional<PoseRef> hovered_point_;
+  /** @brief Un appui du bouton gauche dans l'outil Editer les points, jusqu'au relachement */
+  struct PointPress
+  {
+    /** @brief Position de l'appui, en pixels de l'interacteur */
+    Eigen::Vector2d position = Eigen::Vector2d::Zero();
+    /** @brief Ctrl tenu a l'appui */
+    bool ctrl = false;
+    /** @brief Point saisi a l'appui, ou rien dans le vide */
+    std::optional<PoseRef> point;
+    /** @brief Vrai une fois le seuil de glisser franchi depuis un point : les points suivent le curseur */
+    bool dragging = false;
+    /** @brief Vrai des que le curseur s'est eloigne de l'appui au-dela du seuil, depuis un point ou le vide */
+    bool beyond_threshold = false;
+    /** @brief Vrai une fois les points deplaces au moins une fois : le glisser est devenu une action */
+    bool moved = false;
+    /** @brief Point de la piece sous le curseur a l'appui : origine du deplacement */
+    Eigen::Vector3d piece_start = Eigen::Vector3d::Zero();
+    /** @brief Chemin livre au debut du glisser */
+    std::vector<EditedPass> passes_before;
+    /** @brief Trace de la surface courante au debut du glisser */
+    std::vector<Eigen::Vector3d> trace_before;
+    /** @brief Surface courante, construite au premier mouvement d'un glisser de sommets */
+    std::shared_ptr<const PassSurface> trace_surface;
+  };
+  /** @brief L'appui en cours */
+  PointPress point_press_;
+  /** @brief Vrai entre l'appui et le relachement du bouton gauche dans l'outil */
+  bool point_pressed_ = false;
+  /** @brief Localisateur sur la piece, pour la visibilite des points ; refait quand la piece change */
+  vtkSmartPointer<vtkCellLocator> mesh_locator_;
+  /** @brief Traces d'avant chaque action d'edition, par surface, le plus recent en dernier */
+  std::map<int, std::vector<std::vector<Eigen::Vector3d>>> trace_undo_;
+  /** @brief Traces defaits par Annuler, par surface */
+  std::map<int, std::vector<std::vector<Eigen::Vector3d>>> trace_redo_;
+  /** @brief Barre contextuelle de la vue */
+  QFrame* context_bar_ = nullptr;
+  /** @brief Supprimer, dans la barre contextuelle */
+  QPushButton* context_delete_button_ = nullptr;
+  /** @brief Densifier, dans la barre contextuelle */
+  QPushButton* context_densify_button_ = nullptr;
+  /** @brief Texte de la selection, dans la page d'options */
+  QLabel* point_info_label_ = nullptr;
+  /** @brief Supprimer, dans la page d'options */
+  QPushButton* delete_points_button_ = nullptr;
+  /** @brief Densifier, dans la page d'options */
+  QPushButton* densify_points_button_ = nullptr;
+  /** @brief Mode de Densifier : Pas ou Nombre */
+  QComboBox* densify_mode_combo_ = nullptr;
   /** @brief Ecart maximal voulu entre deux poses apres densification, en millimetres */
   QDoubleSpinBox* densify_step_spin_box_ = nullptr;
-  /** @brief Texte des points choisis, sur la page Densifier */
-  QLabel* densify_ends_label_ = nullptr;
-  /** @brief Marques des points choisis dans la vue */
-  vtkSmartPointer<vtkActor> densify_actor_;
+  /** @brief Nombre de points par ecart, en mode Nombre */
+  QSpinBox* densify_count_spin_box_ = nullptr;
+  /** @brief Ligne du pas cible, montree en mode Pas */
+  QWidget* densify_step_row_ = nullptr;
+  /** @brief Ligne du nombre de points, montree en mode Nombre */
+  QWidget* densify_count_row_ = nullptr;
+  /** @brief Marques des points choisis */
+  vtkSmartPointer<vtkActor> selected_points_actor_;
+  /** @brief Marque du point sous le curseur */
+  vtkSmartPointer<vtkActor> hovered_point_actor_;
+  /** @brief Points que Densifier ajouterait */
+  vtkSmartPointer<vtkActor> densify_preview_actor_;
+  /** @brief Troncon de A a B surligne */
+  vtkSmartPointer<vtkActor> densify_span_actor_;
+  /** @brief Lettres A et B dans la vue */
+  std::vector<vtkSmartPointer<vtkBillboardTextActor3D>> densify_labels_;
+  /** @brief Renderer du cube, dessine par-dessus la vue, sans interaction propre */
+  vtkSmartPointer<vtkRenderer> view_cube_renderer_;
+  /** @brief Cube a faces nommees */
+  vtkSmartPointer<vtkAnnotatedCubeActor> view_cube_actor_;
+  /** @brief Fleches triangulaires et le cote de l'ecran que chacune designe */
+  std::vector<std::pair<CubeArrow, QToolButton*>> view_cube_arrows_;
+  /** @brief Fleche courbe : quart de tour dans le sens inverse des aiguilles d'une montre */
+  QToolButton* view_cube_roll_ccw_ = nullptr;
+  /** @brief Fleche courbe : quart de tour dans le sens horaire */
+  QToolButton* view_cube_roll_cw_ = nullptr;
+  /** @brief Observateur du debut de rendu qui cale le cube, retire a la destruction */
+  unsigned long view_cube_observer_ = 0;
+  /** @brief Bouton maison : vue isometrique */
+  QToolButton* view_cube_home_ = nullptr;
 };
 
 }  // namespace noether

@@ -15,220 +15,129 @@
  */
 #include <noether_gui/widgets/path_edit_widget.h>
 
-#include <noether_tpp/serialization.h>
-
 #include <QApplication>
 #include <gtest/gtest.h>
-#include <stdexcept>
-#include <yaml-cpp/yaml.h>
 
 using namespace noether;
 
 namespace
 {
-/** @brief Fewest waypoints a delivered pass may carry, as z404_sdg_planning reads them */
+/** @brief Nombre minimal de poses d'une passe livree, comme z404_sdg_planning le lit */
 const std::size_t kMinPoses = 4;
 
-/** @brief Largest position difference still counted as the same generated pass, in metres */
-const double kTolerance = 1e-9;
-
-/** @brief Builds a straight run of waypoints along x, one every 10 mm, starting at @p x0 */
-ToolPathSegment straightSegment(double x0, std::size_t count)
+/** @brief Passe droite le long de x, une pose tous les 10 mm a partir de @p x0, sans surface */
+EditedPass straightPass(const double x0, const std::size_t count)
 {
-  ToolPathSegment segment;
+  EditedPass pass;
   for (std::size_t i = 0; i < count; ++i)
   {
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
     pose.translation() = Eigen::Vector3d(x0 + 0.01 * static_cast<double>(i), 0.0, 0.0);
-    segment.push_back(pose);
+    pass.poses.push_back(pose);
   }
-  return segment;
+  return pass;
 }
 
-/** @brief Three generated passes of ten waypoints each, a metre apart */
-std::vector<ToolPathSegment> threePasses()
+/** @brief Trois passes de dix poses, a un metre l'une de l'autre */
+std::vector<EditedPass> threePasses()
 {
-  std::vector<ToolPathSegment> generated;
-  generated.push_back(straightSegment(0.0, 10));
-  generated.push_back(straightSegment(1.0, 10));
-  generated.push_back(straightSegment(2.0, 10));
-  return generated;
+  return { straightPass(0.0, 10), straightPass(1.0, 10), straightPass(2.0, 10) };
 }
 
-/** @brief Reads a saved tool path file and flattens it into the list of passes */
-std::vector<ToolPathSegment> loadFlattened(const std::string& file)
+/** @brief Abscisse de la premiere pose de chaque passe livree : elle nomme la passe */
+std::vector<double> passStarts(const PathEditWidget& widget)
 {
-  const YAML::Node root = YAML::LoadFile(file);
-  return flattenToolPaths(root.as<std::vector<ToolPaths>>());
-}
-
-/** @brief The generated pass indices a delivered pass takes, in order */
-std::vector<std::size_t> sourcesOf(const PathRecipe& recipe, std::size_t pass)
-{
-  std::vector<std::size_t> indices;
-  for (std::size_t i = 0; i < recipe[pass].size(); ++i)
+  std::vector<double> starts;
+  for (const ToolPathSegment& pass : widget.passes())
   {
-    indices.push_back(recipe[pass][i].segment);
+    starts.push_back(pass.front().translation().x());
   }
-  return indices;
+  return starts;
 }
-
 }  // namespace
 
 TEST(PathEditWidget, StartsOnTheGenerationUnchanged)
 {
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
-  EXPECT_EQ(widget.recipe().size(), 3u);
+  widget.setPasses(threePasses());
   EXPECT_EQ(widget.passes().size(), 3u);
   EXPECT_EQ(widget.passes()[0].size(), 10u);
   EXPECT_EQ(widget.selectedPass(), 0);
   EXPECT_TRUE(widget.faults().empty());
+  EXPECT_FALSE(widget.isModified());
 }
 
 TEST(PathEditWidget, MovingAPassChangesOnlyTheExecutionOrder)
 {
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
+  widget.setPasses(threePasses());
   widget.selectPass(2);
   widget.moveSelected(-1);
-
-  EXPECT_EQ(sourcesOf(widget.recipe(), 1), std::vector<std::size_t>({ 2u }));
-  EXPECT_EQ(sourcesOf(widget.recipe(), 2), std::vector<std::size_t>({ 1u }));
-  // La selection suit la passe deplacee, sinon le clic suivant porte sur une autre
+  EXPECT_EQ(passStarts(widget), std::vector<double>({ 0.0, 2.0, 1.0 }));
+  // Le choix suit la passe deplacee, sinon le clic suivant porterait sur une autre
   EXPECT_EQ(widget.selectedPass(), 1);
-
   widget.selectPass(0);
   widget.moveSelected(-1);
-  EXPECT_EQ(sourcesOf(widget.recipe(), 0), std::vector<std::size_t>({ 0u }));
-}
-
-TEST(PathEditWidget, WeldingJoinsTheSelectedPassToTheOneBefore)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
-  widget.selectPass(1);
-  widget.weldSelected();
-
-  ASSERT_EQ(widget.recipe().size(), 2u);
-  EXPECT_EQ(sourcesOf(widget.recipe(), 0), std::vector<std::size_t>({ 0u, 1u }));
-  // 10 + 10, moins le retrait de la premiere et l'approche de la seconde
-  EXPECT_EQ(widget.passes()[0].size(), 18u);
-  EXPECT_EQ(widget.selectedPass(), 0);
-
-  // La premiere passe n'a rien au-dessus d'elle : la soudure ne fait rien
-  widget.selectPass(0);
-  widget.weldSelected();
-  EXPECT_EQ(widget.recipe().size(), 2u);
-}
-
-TEST(PathEditWidget, ReversingTurnsEveryPieceAndTheirOrder)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
-  widget.selectPass(1);
-  widget.weldSelected();
-  widget.reverseSelected();
-
-  ASSERT_EQ(widget.recipe()[0].size(), 2u);
-  EXPECT_EQ(sourcesOf(widget.recipe(), 0), std::vector<std::size_t>({ 1u, 0u }));
-  EXPECT_TRUE(widget.recipe()[0][0].reversed);
-  EXPECT_TRUE(widget.recipe()[0][1].reversed);
-
-  // Le resultat commence ou la passe soudee finissait
-  const std::vector<ToolPathSegment>& generated = widget.generated();
-  EXPECT_TRUE(widget.passes()[0].front().translation().isApprox(generated[1].back().translation()));
-  EXPECT_TRUE(widget.passes()[0].back().translation().isApprox(generated[0].front().translation()));
-}
-
-TEST(PathEditWidget, SplittingUndoesAWeldInPlace)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
-  widget.selectPass(1);
-  widget.weldSelected();
-  ASSERT_EQ(widget.recipe().size(), 2u);
-
-  widget.selectPass(0);
-  widget.splitSelected();
-
-  ASSERT_EQ(widget.recipe().size(), 3u);
-  EXPECT_EQ(sourcesOf(widget.recipe(), 0), std::vector<std::size_t>({ 0u }));
-  EXPECT_EQ(sourcesOf(widget.recipe(), 1), std::vector<std::size_t>({ 1u }));
-  EXPECT_EQ(sourcesOf(widget.recipe(), 2), std::vector<std::size_t>({ 2u }));
+  EXPECT_EQ(passStarts(widget), std::vector<double>({ 0.0, 2.0, 1.0 }));
 }
 
 TEST(PathEditWidget, RemovingDropsThePassFromTheDelivery)
 {
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
+  widget.setPasses(threePasses());
   widget.selectPass(1);
   widget.removeSelected();
-
-  ASSERT_EQ(widget.recipe().size(), 2u);
-  EXPECT_EQ(sourcesOf(widget.recipe(), 0), std::vector<std::size_t>({ 0u }));
-  EXPECT_EQ(sourcesOf(widget.recipe(), 1), std::vector<std::size_t>({ 2u }));
-  EXPECT_TRUE(widget.faults().empty());
+  EXPECT_EQ(passStarts(widget), std::vector<double>({ 0.0, 2.0 }));
+  EXPECT_EQ(widget.selectedPass(), 1);
 }
 
-TEST(PathEditWidget, UndoGoesBackOneChangeAtATime)
+TEST(PathEditWidget, EveryRenumberingIsAnnouncedAndNothingElse)
 {
+  // Les points choisis designent des rangs de poses : chaque changement de rangs doit etre annonce
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
-  widget.selectPass(1);
-  widget.weldSelected();
+  int announced = 0;
+  widget.on_poses_renumbered = [&announced]() { ++announced; };
+  widget.setPasses(threePasses());
+  EXPECT_EQ(announced, 1);
   widget.selectPass(0);
-  widget.reverseSelected();
-  ASSERT_TRUE(widget.recipe()[0][0].reversed);
-
+  widget.moveSelected(-1);
+  EXPECT_EQ(announced, 1);
+  widget.moveSelected(1);
+  widget.removeSelected();
   widget.undo();
-  EXPECT_FALSE(widget.recipe()[0][0].reversed);
-  EXPECT_EQ(widget.recipe().size(), 2u);
-
-  widget.undo();
-  EXPECT_EQ(widget.recipe().size(), 3u);
-
-  // Rien de plus a annuler : l'etat ne bouge plus
-  widget.undo();
-  EXPECT_EQ(widget.recipe().size(), 3u);
+  widget.redo();
+  EXPECT_EQ(announced, 5);
+  // Un glisser ne change aucun rang
+  widget.beginDrag();
+  widget.setPose(PoseRef{ 0, 1 }, widget.editedPasses()[0].poses[1]);
+  widget.endDrag();
+  EXPECT_EQ(announced, 5);
 }
 
-TEST(PathEditWidget, ResetReturnsToTheGeneration)
+TEST(PathEditWidget, UndoAndRedoWalkTheActions)
 {
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
-  widget.selectPass(1);
-  widget.weldSelected();
-  widget.selectPass(1);
+  widget.setPasses(threePasses());
+  widget.selectPass(0);
   widget.removeSelected();
-  ASSERT_EQ(widget.recipe().size(), 1u);
-
-  widget.reset();
-  EXPECT_EQ(widget.recipe().size(), 3u);
+  widget.selectPass(1);
+  widget.moveSelected(-1);
+  EXPECT_EQ(passStarts(widget), std::vector<double>({ 2.0, 1.0 }));
+  widget.undo();
+  EXPECT_EQ(passStarts(widget), std::vector<double>({ 1.0, 2.0 }));
+  widget.undo();
+  EXPECT_EQ(passStarts(widget), std::vector<double>({ 0.0, 1.0, 2.0 }));
+  EXPECT_FALSE(widget.isModified());
+  widget.redo();
+  EXPECT_EQ(passStarts(widget), std::vector<double>({ 1.0, 2.0 }));
 }
 
 TEST(PathEditWidget, ReportsAPassTooShortToDeliver)
 {
-  std::vector<ToolPathSegment> generated;
-  generated.push_back(straightSegment(0.0, 3));
-  generated.push_back(straightSegment(1.0, 2));
-
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(generated);
-  EXPECT_EQ(widget.faults().size(), 2u);  // les deux passes sont sous le contrat
-
-  widget.selectPass(1);
-  widget.weldSelected();
-  ASSERT_EQ(widget.passes()[0].size(), 3u);
-  EXPECT_EQ(widget.faults().size(), 1u);
+  widget.setPasses({ straightPass(0.0, 3), straightPass(1.0, 2), straightPass(2.0, 4) });
+  // Deux passes sous le minimum, chacune nommee
+  EXPECT_EQ(widget.faults().size(), 2u);
 }
 
 TEST(PathEditWidget, NotifiesItsHostOnEditAndOnSelection)
@@ -238,289 +147,67 @@ TEST(PathEditWidget, NotifiesItsHostOnEditAndOnSelection)
   int selections = 0;
   widget.on_changed = [&edits]() { ++edits; };
   widget.on_selection_changed = [&selections]() { ++selections; };
-
-  widget.setGenerated(threePasses());
+  widget.setPasses(threePasses());
   const int after_generation = edits;
   EXPECT_GT(after_generation, 0);
-
   widget.selectPass(2);
   EXPECT_EQ(selections, 1);
-  EXPECT_EQ(edits, after_generation);  // choisir une ligne ne retouche rien
-
-  widget.reverseSelected();
+  // Choisir une ligne ne modifie pas le chemin
+  EXPECT_EQ(edits, after_generation);
+  widget.removeSelected();
   EXPECT_GT(edits, after_generation);
 }
 
-TEST(PathEditWidget, KnowsWhetherAnythingWasRetouched)
+TEST(PathEditWidget, ANewGenerationClearsEverything)
 {
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  EXPECT_FALSE(widget.isRetouched());
-
+  widget.setPasses(threePasses());
   widget.selectPass(1);
-  widget.reverseSelected();
-  EXPECT_TRUE(widget.isRetouched());
-
-  widget.undo();
-  EXPECT_FALSE(widget.isRetouched());
-
-  // Un simple echange de rang compte aussi : l'ordre d'execution a change
-  widget.selectPass(2);
-  widget.moveSelected(-1);
-  EXPECT_TRUE(widget.isRetouched());
-
-  widget.reset();
-  EXPECT_FALSE(widget.isRetouched());
-
-  // Une generation vide n'a rien a retoucher
-  PathEditWidget empty(kMinPoses);
-  EXPECT_FALSE(empty.isRetouched());
-}
-
-TEST(PathEditWidget, ATakenBackGenerationClearsEverything)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  widget.selectPass(1);
-  widget.weldSelected();
-
-  widget.setGenerated(std::vector<ToolPathSegment>());
-
-  EXPECT_TRUE(widget.recipe().empty());
+  widget.removeSelected();
+  widget.setPasses(std::vector<EditedPass>());
   EXPECT_TRUE(widget.passes().empty());
   EXPECT_EQ(widget.selectedPass(), -1);
   EXPECT_TRUE(widget.faults().empty());
-  EXPECT_FALSE(widget.isRetouched());
-}
-
-TEST(PathEditWidget, RefusesARecipeWrittenOnAnotherGeneration)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-
-  RecipeFile content;
-  content.source = fingerprintSegments(threePasses());
-  content.recipe = identityRecipe(3);
-  EXPECT_NO_THROW(widget.applyRecipeFile(content, kTolerance));
-
-  std::vector<ToolPathSegment> other = threePasses();
-  other[2] = straightSegment(5.0, 10);
-  content.source = fingerprintSegments(other);
-  EXPECT_THROW(widget.applyRecipeFile(content, kTolerance), std::runtime_error);
-}
-
-TEST(PathEditWidget, ReplaysASavedRecipeOnTheSameGeneration)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  widget.selectPass(1);
-  widget.weldSelected();
-  widget.selectPass(0);
-  widget.reverseSelected();
-
-  RecipeFile content;
-  content.recipe = widget.recipe();
-  content.source = fingerprintSegments(widget.generated());
-
-  PathEditWidget replayed(kMinPoses);
-  replayed.setGenerated(threePasses());
-  replayed.applyRecipeFile(content, kTolerance);
-
-  ASSERT_EQ(replayed.passes().size(), widget.passes().size());
-  for (std::size_t p = 0; p < replayed.passes().size(); ++p)
-  {
-    ASSERT_EQ(replayed.passes()[p].size(), widget.passes()[p].size());
-    for (std::size_t w = 0; w < replayed.passes()[p].size(); ++w)
-    {
-      EXPECT_TRUE(replayed.passes()[p][w].isApprox(widget.passes()[p][w], 1e-12));
-    }
-  }
-}
-
-TEST(PathEditWidget, AnEmptyGenerationDeliversNothingRatherThanPassingValidation)
-{
-  // Le dock vide doit rester vide : c'est ce sur quoi la fenetre s'appuie pour refuser
-  // d'enregistrer apres une planification qui a echoue en cours de route.
-  PathEditWidget widget(kMinPoses);
-  EXPECT_TRUE(widget.generated().empty());
+  EXPECT_FALSE(widget.isModified());
+  widget.undo();
   EXPECT_TRUE(widget.passes().empty());
-  EXPECT_TRUE(widget.recipe().empty());
 }
 
-TEST(PathEditWidget, ReachesTheHandEditOfWorkpiece5803024014WithTheButtonsAlone)
-{
-  const std::vector<ToolPathSegment> generated =
-      loadFlattened(std::string(TOOL_PATH_DIR) + "/generated_tool_path.yaml");
-  const std::vector<ToolPathSegment> expected =
-      loadFlattened(std::string(TOOL_PATH_DIR) + "/hand_edited_tool_path.yaml");
-  ASSERT_EQ(generated.size(), 7u);
-
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(generated);
-
-  // La suite de gestes qu'un operateur fait au dock pour retrouver la retouche a la main.
-  // Les passes 1, 3 et 5 sont montees cote a cote, soudees dans cet ordre, puis la passe
-  // soudee est inversee d'un coup : c'est ce qui donne 5, 3, 1 a l'envers.
-  widget.selectPass(2);
-  widget.moveSelected(-1);
-  widget.weldSelected();
-
-  widget.selectPass(5);
-  for (int i = 0; i < 4; ++i)
-  {
-    widget.moveSelected(-1);
-  }
-
-  widget.selectPass(5);
-  widget.moveSelected(-1);
-
-  widget.selectPass(3);
-  widget.weldSelected();
-  widget.selectPass(3);
-  widget.weldSelected();
-
-  widget.selectPass(2);
-  widget.reverseSelected();
-
-  EXPECT_TRUE(widget.faults().empty());
-  ASSERT_EQ(widget.passes().size(), expected.size());
-  for (std::size_t p = 0; p < expected.size(); ++p)
-  {
-    ASSERT_EQ(widget.passes()[p].size(), expected[p].size()) << "passe " << p;
-    for (std::size_t w = 0; w < expected[p].size(); ++w)
-    {
-      EXPECT_TRUE(widget.passes()[p][w].isApprox(expected[p][w], 1e-12)) << "passe " << p << ", pose " << w;
-    }
-  }
-}
-
-TEST(PathEditWidget, MovesAPoseAndUndoesTheWholeDragAtOnce)
+TEST(PathEditWidget, ADragIsUndoneAtOnce)
 {
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  EXPECT_FALSE(widget.isRetouched());
-
-  PoseMove move;
-  move.segment = 1;
-  move.index = 3;
-  widget.beginPoseMoves();
+  widget.setPasses(threePasses());
+  int edits = 0;
+  widget.on_changed = [&edits]() { ++edits; };
+  widget.beginDrag();
   for (int step = 1; step <= 5; ++step)
   {
-    move.pose.translation() = Eigen::Vector3d(1.03, 0.01 * step, 0.0);
-    widget.movePose(move);
+    Eigen::Isometry3d pose = widget.editedPasses()[0].poses[3];
+    pose.translation().y() = 0.001 * step;
+    widget.setPose(PoseRef{ 0, 3 }, pose);
   }
-  ASSERT_EQ(widget.moves().size(), 1u);
-  EXPECT_TRUE(widget.isRetouched());
-  EXPECT_NEAR(widget.passes()[1][3].translation().y(), 0.05, 1e-12);
-  EXPECT_NEAR(widget.generated()[1][3].translation().y(), 0.0, 1e-12);
-
+  widget.endDrag();
+  // L'hote ne redessine qu'au relachement
+  EXPECT_EQ(edits, 1);
+  EXPECT_NEAR(widget.passes()[0][3].translation().y(), 0.005, 1e-12);
   widget.undo();
-  EXPECT_TRUE(widget.moves().empty());
-  EXPECT_FALSE(widget.isRetouched());
-  EXPECT_NEAR(widget.passes()[1][3].translation().y(), 0.0, 1e-12);
+  EXPECT_NEAR(widget.passes()[0][3].translation().y(), 0.0, 1e-12);
 }
 
-/// Densifier ajoute des poses dans la passe livree, d'un seul point d'annulation, et marque la retouche
-TEST(PathEditWidget, InsertedPosesJoinThePassAndUndoAtOnce)
+TEST(PathEditWidget, InsertedAndRemovedPosesAreOneActionEach)
 {
   PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  Eigen::Isometry3d middle = Eigen::Isometry3d::Identity();
-  middle.translation() = Eigen::Vector3d(1.035, 0.0, 0.0);
-  Eigen::Isometry3d later = Eigen::Isometry3d::Identity();
-  later.translation() = Eigen::Vector3d(1.065, 0.0, 0.0);
-  widget.insertPoses({ PoseInsertion{ 1, 3, { middle } }, PoseInsertion{ 1, 6, { later } } });
-
-  ASSERT_EQ(widget.passes()[1].size(), 12u);
-  EXPECT_NEAR(widget.passes()[1][4].translation().x(), 1.035, 1e-12);
-  EXPECT_NEAR(widget.passes()[1][8].translation().x(), 1.065, 1e-12);
-  EXPECT_EQ(widget.generated()[1].size(), 10u);
-  EXPECT_TRUE(widget.isRetouched());
-
-  widget.undo();
-  EXPECT_TRUE(widget.insertions().empty());
-  EXPECT_EQ(widget.passes()[1].size(), 10u);
-  EXPECT_FALSE(widget.isRetouched());
-}
-
-/// Redensifier une place remplace l'ajout precedent ; une nouvelle generation oublie tout
-TEST(PathEditWidget, ADensifiedPlaceIsReplacedAndANewGenerationForgetsIt)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  Eigen::Isometry3d first = Eigen::Isometry3d::Identity();
-  first.translation() = Eigen::Vector3d(0.033, 0.0, 0.0);
-  Eigen::Isometry3d second = Eigen::Isometry3d::Identity();
-  second.translation() = Eigen::Vector3d(0.036, 0.0, 0.0);
-  widget.insertPoses({ PoseInsertion{ 0, 3, { first, first } } });
-  widget.insertPoses({ PoseInsertion{ 0, 3, { second } } });
-  ASSERT_EQ(widget.insertions().size(), 1u);
-  ASSERT_EQ(widget.passes()[0].size(), 11u);
-  EXPECT_NEAR(widget.passes()[0][4].translation().x(), 0.036, 1e-12);
-
-  // Redensifier plus large : l'ecart deja sous le pas recoit une insertion vide, qui efface l'ajout
-  widget.insertPoses({ PoseInsertion{ 0, 3, {} } });
-  EXPECT_TRUE(widget.insertions().empty());
+  widget.setPasses(threePasses());
+  ToolPathSegment added(2, widget.editedPasses()[0].poses[2]);
+  widget.insertPoses({ GapInsertion{ 0, 2, added } });
+  EXPECT_EQ(widget.passes()[0].size(), 12u);
+  widget.removePoses({ PoseRef{ 0, 4 }, PoseRef{ 0, 5 } });
   EXPECT_EQ(widget.passes()[0].size(), 10u);
   widget.undo();
-  EXPECT_EQ(widget.passes()[0].size(), 11u);
-
-  widget.setGenerated(threePasses());
-  EXPECT_TRUE(widget.insertions().empty());
-  EXPECT_EQ(widget.passes()[0].size(), 10u);
-}
-
-/// Les poses ajoutees se rejouent depuis le fichier de retouche
-TEST(PathEditWidget, ReplaysInsertionsFromTheRecipeFile)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  RecipeFile content;
-  content.recipe = identityRecipe(3);
-  content.source = fingerprintSegments(threePasses());
-  Eigen::Isometry3d added = Eigen::Isometry3d::Identity();
-  added.translation() = Eigen::Vector3d(2.015, 0.0, 0.0);
-  content.insertions.push_back(PoseInsertion{ 2, 1, { added } });
-  widget.applyRecipeFile(content, kTolerance);
-  ASSERT_EQ(widget.passes()[2].size(), 11u);
-  EXPECT_NEAR(widget.passes()[2][2].translation().x(), 2.015, 1e-12);
-}
-
-TEST(PathEditWidget, MovedPosesFollowTheRecipe)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  PoseMove move;
-  move.segment = 0;
-  move.index = 0;
-  move.pose.translation() = Eigen::Vector3d(-1.0, 0.0, 0.0);
-  widget.beginPoseMoves();
-  widget.movePose(move);
-  // La passe 0 retournee : la pose deplacee, premiere de la generation, finit derniere
-  widget.selectPass(0);
-  widget.reverseSelected();
-  EXPECT_NEAR(widget.passes()[0].back().translation().x(), -1.0, 1e-12);
-}
-
-TEST(PathEditWidget, ChainsEveryPassFromTheSelectedOneWithoutLifting)
-{
-  PathEditWidget widget(kMinPoses);
-  widget.setGenerated(threePasses());
-  widget.selectPass(2);
-  widget.chainFromSelected();
-
-  ASSERT_EQ(widget.recipe().size(), 1u);
-  // From the pass at x = 2, the nearest end of the pass at x = 1 is its end, and so on down
-  const std::vector<std::size_t> expected = { 2, 1, 0 };
-  EXPECT_EQ(sourcesOf(widget.recipe(), 0), expected);
-  EXPECT_FALSE(widget.recipe()[0][0].reversed);
-  EXPECT_TRUE(widget.recipe()[0][1].reversed);
-  EXPECT_TRUE(widget.recipe()[0][2].reversed);
-  EXPECT_EQ(widget.passes().size(), 1u);
-  EXPECT_TRUE(widget.isRetouched());
-
+  EXPECT_EQ(widget.passes()[0].size(), 12u);
   widget.undo();
-  EXPECT_EQ(widget.recipe().size(), 3u);
+  EXPECT_EQ(widget.passes()[0].size(), 10u);
+  EXPECT_FALSE(widget.isModified());
 }
 
 int main(int argc, char** argv)
