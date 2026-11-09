@@ -370,9 +370,6 @@
    <property name="text">
     <string>Save modified mesh(es)...</string>
    </property>
-   <property name="shortcut">
-    <string>Ctrl+D</string>
-   </property>
   </action>
   <action name="action_clear_selection">
    <property name="icon">

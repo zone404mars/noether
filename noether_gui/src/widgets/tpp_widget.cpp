@@ -416,6 +416,10 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   // region or places an outline vertex, a drag paints when the brush or the eraser is active.
   cell_picker_ = vtkSmartPointer<vtkCellPicker>::New();
   cell_picker_->SetTolerance(0.0005);
+  // Seul le maillage de la piece arrete le rayon : le chemin, ses normales et les marqueurs sont
+  // dessines devant la piece, et un rayon arrete par eux ferait manquer la piece sous le curseur
+  cell_picker_->PickFromListOn();
+  cell_picker_->AddPickList(mesh_actor_);
   auto interactor_style = vtkSmartPointer<SelectionInteractorStyle>::New();
   interactor_style->on_click = [this](int x, int y, bool shift, bool double_click) {
     // Alt + clic sous un outil de glisser tourne la vue : il ne choisit pas de face
@@ -470,6 +474,7 @@ TPPWidget::TPPWidget(std::shared_ptr<const WidgetFactory> factory, QWidget* pare
   buildFeatureTree();
   buildOptionsDock();
   buildRibbon();
+  bindEditShortcuts();
   buildViewCube();
   translateMenus();
   updateToolControls();
@@ -1035,19 +1040,6 @@ int TPPWidget::pickFace(const int x, const int y) const
   return static_cast<int>(cell_id);
 }
 
-bool TPPWidget::pickAnyPoint(const int x, const int y, Eigen::Vector3d& point) const
-{
-  cell_picker_->Pick(x, y, 0, renderer_);
-  if (cell_picker_->GetCellId() < 0)
-  {
-    return false;
-  }
-  double picked[3] = { 0.0, 0.0, 0.0 };
-  cell_picker_->GetPickPosition(picked);
-  point = Eigen::Vector3d(picked[0], picked[1], picked[2]);
-  return true;
-}
-
 int TPPWidget::pickPoint(const int x, const int y, Eigen::Vector3d& point) const
 {
   const int face = pickFace(x, y);
@@ -1191,9 +1183,9 @@ bool isEnterKey(const std::string& key) { return key == "Return" || key == "KP_E
 
 void TPPWidget::onKeyPressed(const std::string& key, const bool shift)
 {
+  // Les touches de l'outil Editer les points passent par les raccourcis de la fenetre
   if (editingPoints())
   {
-    onEditKey(key);
     return;
   }
   if (tracing())

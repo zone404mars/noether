@@ -26,9 +26,14 @@
 #include <noether_gui/widgets/point_picking.h>
 
 #include <QApplication>
+#include <QKeySequence>
+#include <QShortcut>
 #include <QStatusBar>
 #include <QToolButton>
 #include <QVTKOpenGLNativeWidget.h>
+#include <functional>
+#include <utility>
+#include <vector>
 #include <vtkCamera.h>
 #include <vtkCellLocator.h>
 #include <vtkPolyData.h>
@@ -54,6 +59,10 @@ void TPPWidget::onEditPointsToggled(const bool checked)
   clearPointSelection();
   hovered_point_.reset();
   point_pressed_ = false;
+  for (QShortcut* shortcut : edit_shortcuts_)
+  {
+    shortcut->setEnabled(checked);
+  }
   if (checked)
   {
     outline_.clear();
@@ -355,30 +364,39 @@ void TPPWidget::finishPointDrag()
   render();
 }
 
-void TPPWidget::onEditKey(const std::string& key)
+std::vector<std::pair<QKeySequence, std::function<void()>>> TPPWidget::editShortcutBindings()
 {
-  // Pendant un glisser, une touche agirait sur un chemin en cours de deplacement
-  if (point_pressed_)
+  return {
+    { QKeySequence(Qt::Key_Delete), [this]() { deleteSelectedPoints(); } },
+    { QKeySequence(Qt::Key_Escape),
+      [this]() {
+        clearPointSelection();
+        render();
+      } },
+    { QKeySequence(Qt::CTRL | Qt::Key_Z), [this]() { undoPointEdit(); } },
+    { QKeySequence(Qt::CTRL | Qt::Key_Y), [this]() { redoPointEdit(); } },
+  };
+}
+
+void TPPWidget::bindEditShortcuts()
+{
+  for (const auto& binding : editShortcutBindings())
   {
-    return;
-  }
-  const bool ctrl = (QApplication::keyboardModifiers() & Qt::ControlModifier) != 0;
-  if (key == "Delete")
-  {
-    deleteSelectedPoints();
-  }
-  else if (key == "Escape")
-  {
-    clearPointSelection();
-    render();
-  }
-  else if (ctrl && (key == "z" || key == "Z"))
-  {
-    undoPointEdit();
-  }
-  else if (ctrl && (key == "y" || key == "Y"))
-  {
-    redoPointEdit();
+    // Portee fenetre : l'arbre ou un bouton du panneau qui a le focus ne bloque plus la touche.
+    // Un champ de saisie la garde pour lui (son propre Ctrl+Z, son Suppr) tant qu'il a le focus.
+    auto* shortcut = new QShortcut(binding.first, this);
+    shortcut->setContext(Qt::WindowShortcut);
+    // Inactif hors de l'outil : Echap garde son effet dans le Polygone et le Trace manuel
+    shortcut->setEnabled(false);
+    const std::function<void()> action = binding.second;
+    connect(shortcut, &QShortcut::activated, this, [this, action]() {
+      // Pendant un glisser, une touche agirait sur un chemin en cours de deplacement (N26)
+      if (!point_pressed_)
+      {
+        action();
+      }
+    });
+    edit_shortcuts_.push_back(shortcut);
   }
 }
 

@@ -55,6 +55,13 @@ add_executable(${PROJECT_NAME}_view_cube_utest view_cube_utest.cpp)
 target_link_libraries(${PROJECT_NAME}_view_cube_utest PRIVATE ${PROJECT_NAME} GTest::GTest GTest::Main)
 add_gtest_discover_tests(${PROJECT_NAME}_view_cube_utest)
 
+# QTest envoie les touches par le meme chemin que le clavier, raccourcis de la fenetre compris
+find_package(Qt5 REQUIRED COMPONENTS Test)
 add_executable(${PROJECT_NAME}_tpp_widget_utest tpp_widget_utest.cpp)
-target_link_libraries(${PROJECT_NAME}_tpp_widget_utest PRIVATE ${PROJECT_NAME} Qt5::Widgets GTest::GTest)
+target_link_libraries(${PROJECT_NAME}_tpp_widget_utest PRIVATE ${PROJECT_NAME} Qt5::Widgets Qt5::Test GTest::GTest)
+target_compile_definitions(
+  ${PROJECT_NAME}_tpp_widget_utest
+  PRIVATE TOOL_PATH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../noether_tpp/test/tool_paths"
+          MESH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../noether_tpp/test/meshes"
+)
 add_gtest_discover_tests(${PROJECT_NAME}_tpp_widget_utest)

@@ -22,6 +22,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 class QVTKOpenGLNativeWidget;
@@ -36,6 +37,8 @@ class QAction;
 class QButtonGroup;
 class QGridLayout;
 class QPushButton;
+class QShortcut;
+class QKeySequence;
 class QStackedWidget;
 class QToolButton;
 class QTreeWidget;
@@ -503,8 +506,13 @@ protected:
   void dragTraceVerticesBy(const Eigen::Vector3d& delta);
   /** @brief Fin du glisser : le chemin et ses dessins sont recalcules une fois */
   void finishPointDrag();
-  /** @brief Touches de l'outil quand la vue a le focus : Suppr, Echap, Ctrl+Z, Ctrl+Y */
-  void onEditKey(const std::string& key);
+  /**
+   * @brief Cree les raccourcis de l'outil au niveau de la fenetre : Suppr, Echap, Ctrl+Z, Ctrl+Y.
+   * Ils marchent quel que soit le widget qui a le focus clavier, sauf un champ de saisie.
+   */
+  void bindEditShortcuts();
+  /** @brief Touche de chaque raccourci de l'outil et l'action qu'elle declenche */
+  std::vector<std::pair<QKeySequence, std::function<void()>>> editShortcutBindings();
   /** @brief Vide la selection de points et met a jour ce qui en depend */
   void clearPointSelection();
   /** @brief Pourquoi Supprimer est indisponible, ou rien s'il est disponible (§20, §23) */
@@ -594,13 +602,6 @@ protected:
    * @return La face touchee, -1 quand le rayon rate le maillage
    */
   int pickPoint(int x, int y, Eigen::Vector3d& point) const;
-  /**
-   * @brief Point 3D sous une position d'affichage, quel que soit l'acteur touche
-   * @details Un point du chemin est dessine par-dessus le maillage : le clic qui le vise touche
-   * la fleche, pas la face. Pour saisir, la position touchee suffit.
-   * @return Vrai quand le rayon touche quelque chose
-   */
-  bool pickAnyPoint(int x, int y, Eigen::Vector3d& point) const;
   /**
    * @brief Paints or erases one brush dab centred on a display position
    * @details Commits into the selection without refreshing the view: the caller refreshes once per
@@ -885,6 +886,8 @@ protected:
 
   /** @brief Outil a bascule de l'onglet Traitement : Editer les points */
   QToolButton* edit_points_button_ = nullptr;
+  /** @brief Raccourcis de l'outil Editer les points, actifs seulement quand l'outil l'est */
+  std::vector<QShortcut*> edit_shortcuts_;
   /** @brief Points choisis dans l'outil Editer les points */
   PointSelection point_selection_;
   /** @brief Point sous le curseur, dessine en pre-selection */

@@ -630,7 +630,7 @@ distance de glisser du système (`QApplication::startDragDistance`), sinon c'est
 
 | Geste | Effet | Convention suivie |
 | --- | --- | --- |
-| survol | le point saisissable sous le curseur est dessiné en pré-sélection | toutes |
+| survol | le point saisissable sous le curseur est dessiné en pré-sélection ; seul le maillage de la pièce arrête le rayon de sélection, pas le chemin dessiné devant elle (N32) | toutes |
 | clic sur un point | la sélection devient ce seul point | toutes |
 | Ctrl + clic sur un point | le point est ajouté à la sélection, ou retiré s'il y était | SolidWorks, Fusion |
 | clic dans le vide, Échap | la sélection se vide | toutes |
@@ -662,11 +662,12 @@ Suppr reste possible. Un appui hors de la pièce ne commence pas de glisser : «
 glisser sur la pièce. »
 
 Les raccourcis Suppr, Échap, Ctrl+Z et Ctrl+Y de cette section ne valent que **quand
-l'outil Éditer les points est actif et que la vue 3D a le focus**. Avec un autre outil,
+l'outil Éditer les points est actif**. Ils valent alors dans toute la fenêtre, quel que
+soit le widget qui a le focus (vue 3D, arbre, bouton du panneau), sauf un champ de saisie,
+qui garde son propre Ctrl+Z et son Suppr tant qu'il a le focus (N31). Avec un autre outil,
 les touches gardent leur effet de V1 (Échap du Polygone et du Tracé manuel), et Ctrl+Z,
-Ctrl+Y ne font rien dans la vue. Dans l'arbre ou la liste des passes, Suppr garde son
-effet de V1. Pendant un glisser, ces touches sont ignorées (N26) : elles agiraient sur un
-chemin en cours de déplacement.
+Ctrl+Y ne font rien. Pendant un glisser, ces touches sont ignorées (N26) : elles agiraient
+sur un chemin en cours de déplacement.
 
 ### 19.4 Couleurs
 
@@ -690,6 +691,8 @@ Les actions s'offrent à trois endroits, comme dans SolidWorks :
 | --- | --- | --- |
 | Supprimer | Suppr | sélection non vide, et règles de §20 tenues |
 | Densifier | aucun | génération existante, pièce ouverte, exactement deux poses de la même passe sélectionnées, passe à surface connue (§21.1) |
+
+Ctrl+D est le raccourci de *Effacer la sélection* (V1), et d'aucune autre action (N33).
 
 Une action indisponible est grisée, avec une bulle d'aide qui dit pourquoi.
 
@@ -918,7 +921,11 @@ test vérifie le calcul, pas le geste dans la fenêtre. Non coché : geste dans 
 - [x] Sélection sur deux passes dont une tomberait à 3 poses → Supprimer grisé, bulle qui nomme cette passe (`EditedPath.RefusesARemovalThatLeavesAPassTooShortAndNamesIt` ; le texte de la bulle se contrôle à l'écran)
 - [x] Suppr sur trois poses, Ctrl+Z → les trois reviennent ; Ctrl+Y → elles disparaissent de nouveau (`EditedPath.UndoAndRedoWalkOneStackOfCopies`, `PathEditWidget.InsertedAndRemovedPosesAreOneActionEach`)
 - [x] Ctrl+Z, puis une nouvelle action, puis Ctrl+Y → rien n'est rétabli (`EditedPath.ANewActionAfterUndoForgetsWhatCouldBeRedone`)
-- [ ] Suppr avec le focus dans l'arbre → effet de V1 sur l'arbre, aucun point supprimé
+- [x] Outil actif, focus dans l'arbre → Suppr, Ctrl+Z et Ctrl+Y agissent sur les points (`TPPWidget.EditShortcutsWorkWhenTheTreeHasFocus`)
+- [x] Outil actif, focus dans la vue → idem (`TPPWidget.EditShortcutsWorkWhenTheViewHasFocus`)
+- [x] Focus dans un champ de saisie → Ctrl+Z et Suppr restent au champ (`TPPWidget.EditShortcutsLeaveTheFieldsAlone`)
+- [x] Autre outil actif → les raccourcis ne font rien (`TPPWidget.EditShortcutsAreOffWithAnotherTool`)
+- [x] Clic sur un point du chemin dessiné devant la pièce → la face dessous est touchée (`TPPWidget.ThePickerSeesThePartBehindTheToolPath`)
 - [ ] Suppr sur un sommet du milieu du tracé → la polyligne relie ses deux voisins
 - [ ] Tracé de 2 sommets, un sommet sélectionné → Supprimer grisé
 
@@ -1008,6 +1015,9 @@ Ces passages de V1 sont barrés avec un renvoi (01/11/2026) :
 | N28 | Après une suppression (§20.1), l'approche et le retrait ne bougent que si leur pose de contact disparaît. Un glisser de cette pose les emporte toujours (§19.3) | décision utilisateur du 01/11/2026 : re-viser la première pose de contact faisait tourner l'approche autour d'elle, sans que l'opérateur l'ait demandé |
 | N29 | Cube dans un renderer VTK séparé, en couche du dessus et non interactif, au lieu d'un `vtkOrientationMarkerWidget` | décision utilisateur du 01/11/2026 : le point du cube sous un pixel se calcule avec la caméra de ce renderer, et le style d'interaction de la vue garde la souris (rotation, zoom) sans second gestionnaire |
 | N30 | Libellés du cube en majuscules, sans accent ni axe | décision utilisateur du 01/11/2026 : `vtkVectorText` ne connaît que l'ASCII ; « ARRIERE (+Y) » ne se lit plus à la taille du cube ; les axes du repère restent dessinés dans la vue |
+| N31 | Raccourcis de l'outil Éditer les points en portée fenêtre, sauf champ de saisie ; remplace la restriction « vue 3D avec le focus » (§19.3) | décision utilisateur du 09/11/2026 : après un clic dans l'arbre ou le panneau, Suppr et Ctrl+Z ne faisaient plus rien, et rien ne le signalait. L'arbre n'a pas de Suppr de V1, donc rien n'est perdu |
+| N32 | Le picker ne voit que le maillage de la pièce (§19.3) | décision utilisateur du 09/11/2026 : un point du chemin dessiné devant la pièce arrêtait le rayon, et le clic ou le glisser ratait la pièce |
+| N33 | Ctrl+D retiré de « Enregistrer le maillage modifié » (§19.5) | décision utilisateur du 09/11/2026 : deux actions avaient Ctrl+D, Qt n'en déclenche alors aucune ; Effacer la sélection le garde (V1) |
 
 ## Annexe B : trous connus
 
